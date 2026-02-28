@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- White background -->
+    <item android:drawable="@android:color/white" />
+    <!-- Centered logo -->
+    <item
+        android:gravity="center"
+        android:width="200dp"
+        android:height="200dp">
+        <bitmap
+            android:src="@drawable/splash_logo"
+            android:gravity="center" />
+    </item>
+</layer-list>
