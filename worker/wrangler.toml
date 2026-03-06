@@ -1,3 +1,10 @@
 name = "seycure-safe-browsing"
 main = "src/index.ts"
-compatibility_date = "2023-12-01"
+compatibility_date = "2024-01-01"
+
+# ── KV Namespace for Safe Browsing result cache ────────────────────────────────
+# Create the namespace:  npx wrangler kv:namespace create GSB_CACHE
+# Then paste the returned id below.
+[[kv_namespaces]]
+binding = "GSB_CACHE"
+id = "e6ad5cf96f3347d2863104157543da7c"

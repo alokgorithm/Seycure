@@ -1,15 +1,23 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Shield, X, Camera, Link2, Image as ImageIcon, ExternalLink, AlertTriangle, Scissors, Check, ChevronRight, Upload, MapPin, Smartphone, Wrench, Download, Share2, Loader2, Globe, Clock, Lock, Unlock, ArrowRight, Search } from 'lucide-react';
+import { Shield, X, Camera, Link2, Image as ImageIcon, ExternalLink, AlertTriangle, Scissors, Check, ChevronRight, Upload, MapPin, Smartphone, Wrench, Download, Share2, Loader2, ArrowRight, Search, Eye, EyeOff, ShieldAlert, ShieldCheck, RefreshCw, FileText, User, Building2, Type, Calendar } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
 import exifr from 'exifr';
+import { PDFDocument } from 'pdf-lib';
+import JSZip from 'jszip';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { useNativeShare } from '@/hooks/useNativeShare';
 
+import { analyzeScreenshot, type ScreenshotFinding } from '@/hooks/useMLKitOCR';
+import { BlurEditorModal } from '@/components/BlurEditorModal';
+import { LearnedRulesSettings } from '@/components/LearnedRulesSettings';
+import { classifyLink, type CategoryResult } from '@/hooks/useLinkClassifier';
+import { checkPhishingSignals, type PhishingSignal } from '@/hooks/usePhishingDetector';
+
 // Types
-type AppMode = 'link-shield' | 'media-scrubber';
+type AppMode = 'link-shield' | 'media-scrubber' | 'privacy-blur';
 
 interface TrackerParam {
   name: string;
@@ -19,10 +27,10 @@ interface TrackerParam {
 interface FileCard {
   id: string;
   name: string;
-  type: 'image' | 'video';
+  type: 'image' | 'video' | 'document';
   status: 'scanning' | 'clean';
   metadata: {
-    type: 'gps' | 'device' | 'software' | 'none';
+    type: 'gps' | 'device' | 'software' | 'author' | 'title' | 'producer' | 'company' | 'none';
     value: string;
   }[];
   base64Data?: string;
@@ -37,18 +45,14 @@ interface LinkAnalysis {
   isShortener: boolean;
   fileRisk: 'none' | 'low' | 'medium' | 'high' | 'critical';
   fileExtension: string;
+  category: CategoryResult;
   domain: string;
   title: string;
   description: string;
   favicon: string;
   resolvedUrl?: string;
-  trustInfo?: {
-    domainAgeDays: number | null;
-    registrar: string;
-    hasHttps: boolean;
-    trustScore: number;
-    tldSuspicious: boolean;
-  };
+  domainAgeDays?: number | null;
+  phishingSignals?: PhishingSignal[];
   redirectChain?: { url: string; status: number }[];
 }
 
@@ -64,6 +68,9 @@ const TRACKER_PARAMS: TrackerParam[] = [
   { name: 'utm_source_platform', category: 'Google Analytics' },
   { name: 'utm_marketing_tactic', category: 'Google Analytics' },
   { name: 'utm_creative_format', category: 'Google Analytics' },
+  { name: '__utmrg', category: 'Google Analytics' },
+  { name: 'gad_source', category: 'Google Analytics' },
+  { name: 'gad_campaignid', category: 'Google Analytics' },
   // Facebook / Meta
   { name: 'fbclid', category: 'Facebook/Meta' },
   { name: 'mc_eid', category: 'Facebook/Meta' },
@@ -218,30 +225,35 @@ function TopBar({ status }: { status: 'idle' | 'scanning' }) {
   );
 }
 
-function ModeToggle({ mode, onChange }: { mode: AppMode; onChange: (m: AppMode) => void }) {
+function TabBar({ mode, onChange }: { mode: AppMode; onChange: (m: AppMode) => void }) {
+  const isMediaTab = mode === 'media-scrubber' || mode === 'privacy-blur';
+
   return (
     <div className="flex justify-center p-4">
       <div className="inline-flex bg-bg-light rounded-xl p-1 shadow-card">
         <button
           onClick={() => onChange('link-shield')}
-          className={`px-5 py-2.5 rounded-lg font-sans text-sm font-medium transition-all duration-150 flex items-center gap-2 ${mode === 'link-shield'
+          className={`px-4 py-2.5 rounded-lg font-sans text-xs sm:text-sm font-medium transition-all duration-150 flex items-center gap-1.5 ${mode === 'link-shield'
             ? 'bg-primary-blue text-white shadow-glow'
             : 'text-text-secondary hover:text-text-primary'
             }`}
         >
           <Link2 className="w-4 h-4" />
-          Link Shield
+          <span className="hidden sm:inline">Link / QR</span>
+          <span className="sm:hidden">Link</span>
         </button>
         <button
-          onClick={() => onChange('media-scrubber')}
-          className={`px-5 py-2.5 rounded-lg font-sans text-sm font-medium transition-all duration-150 flex items-center gap-2 ${mode === 'media-scrubber'
+          onClick={() => onChange(isMediaTab ? mode : 'media-scrubber')}
+          className={`px-4 py-2.5 rounded-lg font-sans text-xs sm:text-sm font-medium transition-all duration-150 flex items-center gap-1.5 ${isMediaTab
             ? 'bg-primary-blue text-white shadow-glow'
             : 'text-text-secondary hover:text-text-primary'
             }`}
         >
           <ImageIcon className="w-4 h-4" />
-          Media Scrubber
+          <span className="hidden sm:inline">Media + Blur</span>
+          <span className="sm:hidden">Media</span>
         </button>
+
       </div>
     </div>
   );
@@ -781,9 +793,10 @@ function PreviewCard({ analysis, onDismiss }: { analysis: LinkAnalysis; onDismis
   const [screenshotLoaded, setScreenshotLoaded] = useState(false);
   const [threatStatus, setThreatStatus] = useState<'checking' | 'safe' | 'unsafe'>('checking');
   const [threatReason, setThreatReason] = useState('');
-  const [trustInfo, setTrustInfo] = useState(analysis.trustInfo);
   const [redirectChain, setRedirectChain] = useState(analysis.redirectChain);
-  const [loadingTrust, setLoadingTrust] = useState(!analysis.trustInfo);
+  // Category Link Warning Modal state
+  const [showWarningModal, setShowWarningModal] = useState(false);
+  const [intendedUrl, setIntendedUrl] = useState('');
 
   useEffect(() => {
     const metaTimer = setTimeout(() => setMetadataLoaded(true), 1400);
@@ -792,71 +805,9 @@ function PreviewCard({ analysis, onDismiss }: { analysis: LinkAnalysis; onDismis
     // Real async threat check via Cloudflare Worker
     let cancelled = false;
     const runChecks = async () => {
-      // Feature 1: Trust Analyzer (RDAP)
-      if (!trustInfo) {
-        try {
-          // Check HTTPs
-          const hasHttps = analysis.cleanedUrl.startsWith('https://');
-
-          // Suspicious TLD blocklist from earlier
-          const SUSPICIOUS_TLDS = ['.tk', '.ml', '.ga', '.cf', '.gq', '.buzz', '.top', '.xyz', '.club', '.work', '.date', '.racing', '.download', '.stream', '.gdn', '.loan', '.bid'];
-          const tldSuspicious = SUSPICIOUS_TLDS.some(t => analysis.domain.endsWith(t));
-
-          // Fetch RDAP directly from the source (RDAP supports CORS natively)
-          const rdapRes = await fetch(`https://rdap.org/domain/${encodeURIComponent(analysis.domain)}`, { signal: AbortSignal.timeout(4000) }).catch(() => null);
-          const rdapData = rdapRes ? await rdapRes.json().catch(() => ({})) : {};
-
-          let domainAgeDays = null;
-          let registrarName = 'Unknown';
-
-          if (rdapData.events && Array.isArray(rdapData.events)) {
-            for (const event of rdapData.events) {
-              if (event.eventAction === 'registration') {
-                const ageMs = Date.now() - new Date(event.eventDate).getTime();
-                domainAgeDays = Math.floor(ageMs / (1000 * 60 * 60 * 24));
-              }
-            }
-          }
-
-          if (rdapData.entities && Array.isArray(rdapData.entities)) {
-            for (const entity of rdapData.entities) {
-              if (entity.roles && entity.roles.includes('registrar') && entity.vcardArray && entity.vcardArray[1]) {
-                for (const vcardField of entity.vcardArray[1]) {
-                  if (vcardField[0] === 'fn') registrarName = vcardField[3];
-                }
-              }
-            }
-          }
-
-          // Calculate heuristic score (0-100)
-          let score = 100;
-          if (!hasHttps) score -= 40;
-          if (tldSuspicious) score -= 30;
-          if (domainAgeDays !== null) {
-            if (domainAgeDays < 30) score -= 50;
-            else if (domainAgeDays < 180) score -= 20;
-          }
-
-          if (!cancelled) {
-            setTrustInfo({
-              domainAgeDays,
-              registrar: registrarName,
-              hasHttps,
-              trustScore: Math.max(0, score),
-              tldSuspicious
-            });
-            setLoadingTrust(false);
-          }
-        } catch {
-          if (!cancelled) setLoadingTrust(false);
-        }
-      }
-
       // Feature 2: Fetch redirect chain locally using allorigins as a proxy tracer
       try {
         if (!redirectChain && analysis.isShortener) {
-          // We can't do a real 'redirect: manual' HEAD request in the browser due to CORS.
-          // However, allorigins handles the redirects. We'll show a simulated visual chain for the demo/app logic based on original -> cleaned -> resolved
           const mockChain = [{ url: analysis.originalUrl, status: 301 }];
           if (analysis.resolvedUrl && analysis.resolvedUrl !== analysis.originalUrl) {
             mockChain.push({ url: analysis.resolvedUrl, status: 200 });
@@ -867,15 +818,12 @@ function PreviewCard({ analysis, onDismiss }: { analysis: LinkAnalysis; onDismis
         // Ignore chain failure
       }
 
-      await new Promise(r => setTimeout(r, 800)); // small UX delay for "checking" state
       if (cancelled) return;
       const result = await checkUrlThreat(analysis.cleanedUrl);
       if (cancelled) return;
       if (result.isThreat) {
         setThreatStatus('unsafe');
         setThreatReason(result.reason);
-        // Deduct trust score if actual threat found
-        setTrustInfo(prev => prev ? { ...prev, trustScore: 0 } : prev);
       } else {
         setThreatStatus('safe');
       }
@@ -898,33 +846,74 @@ function PreviewCard({ analysis, onDismiss }: { analysis: LinkAnalysis; onDismis
   };
 
   const risk = riskConfig[analysis.fileRisk];
+  const hasPhishing = !!(analysis.phishingSignals && analysis.phishingSignals.length > 0);
+  const isClean = !hasPhishing && threatStatus === 'safe' && risk === null;
 
-  const getActionButton = () => {
+  const handleOpenLink = (url: string) => {
+    if (analysis.category.filterType === 'block' || analysis.category.filterType === 'warn') {
+      setIntendedUrl(url);
+      setShowWarningModal(true);
+    } else {
+      window.open(url, '_blank');
+    }
+  };
+
+  const getActionButtons = () => {
+    if (hasPhishing) {
+      return (
+        <button
+          onClick={onDismiss}
+          className="w-full py-3 px-4 bg-bg-light text-text-primary border border-border-light font-sans text-sm font-medium rounded-lg hover:bg-gray-100 transition-colors flex items-center justify-center gap-2"
+        >
+          <X className="w-4 h-4" />
+          Don't Open — Go Back
+        </button>
+      );
+    }
     if (analysis.fileRisk === 'critical') {
       return (
-        <button className="w-full py-3 px-4 border border-danger-red text-danger-red font-sans text-sm font-medium rounded-lg hover:bg-danger-red/10 transition-colors flex items-center justify-center gap-2">
-          <AlertTriangle className="w-4 h-4" />
-          Open at Your Own Risk
-        </button>
+        <div className="flex flex-col sm:flex-row gap-3">
+          <button
+            onClick={() => handleOpenLink(analysis.cleanedUrl)}
+            className="flex-1 py-3 px-4 border border-danger-red text-danger-red font-sans text-sm font-medium rounded-lg hover:bg-danger-red/10 transition-colors flex items-center justify-center gap-2"
+          >
+            <AlertTriangle className="w-4 h-4" />
+            Open at Your Own Risk
+          </button>
+        </div>
       );
     }
     if (analysis.fileRisk === 'high' || analysis.fileRisk === 'medium') {
       return (
-        <button className="w-full py-3 px-4 border border-warning-amber text-warning-amber font-sans text-sm font-medium rounded-lg hover:bg-warning-amber/10 transition-colors">
-          Open Anyway
-        </button>
+        <div className="flex flex-col sm:flex-row gap-3">
+          <button
+            onClick={() => handleOpenLink(analysis.cleanedUrl)}
+            className="flex-1 py-3 px-4 border border-warning-amber text-warning-amber font-sans text-sm font-medium rounded-lg hover:bg-warning-amber/10 transition-colors"
+          >
+            Open Anyway
+          </button>
+        </div>
       );
     }
+
     return (
-      <a
-        href={analysis.cleanedUrl}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="w-full py-3 px-4 bg-primary-blue text-white font-sans text-sm font-medium rounded-lg hover:bg-primary-blue/90 transition-colors flex items-center justify-center gap-2"
-      >
-        <ExternalLink className="w-4 h-4" />
-        Open Safely
-      </a>
+      <div className="flex flex-col sm:flex-row gap-3">
+        {analysis.trackersRemoved > 0 && (
+          <button
+            onClick={() => handleOpenLink(analysis.originalUrl)}
+            className="flex-1 py-3 px-4 bg-bg-light text-text-primary border border-border-light font-sans text-sm font-medium rounded-lg hover:bg-gray-100 transition-colors flex items-center justify-center gap-2"
+          >
+            Open Original
+          </button>
+        )}
+        <button
+          onClick={() => handleOpenLink(analysis.cleanedUrl)}
+          className="flex-1 py-3 px-4 bg-primary-blue text-white font-sans text-sm font-medium rounded-lg hover:bg-primary-blue/90 transition-colors flex items-center justify-center gap-2"
+        >
+          <ExternalLink className="w-4 h-4" />
+          Open Safely
+        </button>
+      </div>
     );
   };
 
@@ -939,188 +928,261 @@ function PreviewCard({ analysis, onDismiss }: { analysis: LinkAnalysis; onDismis
           </button>
         </div>
 
-        <div className="p-4 space-y-3">
-          {/* Layer 2: Tracker Badge */}
-          {analysis.trackersRemoved > 0 && (
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-primary-light border border-primary-blue/30 rounded-lg">
-              <Scissors className="w-3 h-3 text-primary-blue" />
-              <span className="font-sans text-xs font-medium text-primary-blue">
-                {analysis.trackersRemoved} tracker{analysis.trackersRemoved > 1 ? 's' : ''} removed
-              </span>
+        {hasPhishing ? (
+          <div className="mx-4 mt-4 rounded-xl border-2 border-danger-red overflow-hidden shadow-[0_0_15px_rgba(239,68,68,0.2)]">
+            <div className="bg-danger-red text-white py-3 px-4 font-bold text-sm tracking-wider flex items-center gap-2">
+              <ShieldAlert className="w-5 h-5 animate-pulse" />
+              🚨 LIKELY PHISHING PAGE
             </div>
-          )}
-
-          {/* Layer 3: Shortener Warning */}
-          {analysis.isShortener && (
-            <div className="px-3 py-2 bg-warning-amber/10 border border-warning-amber/30 rounded-lg">
-              <p className="font-sans text-xs font-medium text-warning-amber flex items-center gap-2">
-                <AlertTriangle className="w-3 h-3" />
-                Shortened URL {analysis.resolvedUrl ? '— Resolved' : '— Resolving Destination'}
-              </p>
-              {analysis.resolvedUrl ? (
-                <p className="font-mono text-xs text-warning-amber/80 mt-1 ml-5 break-all">
-                  → {analysis.resolvedUrl}
-                </p>
-              ) : (
-                <div className="flex items-center gap-2 mt-1 ml-5">
-                  <Loader2 className="w-3 h-3 text-warning-amber animate-spin" />
-                  <span className="font-sans text-xs text-warning-amber/70">Following redirects...</span>
+            <div className="bg-danger-red/5 p-4 space-y-3 border-t border-danger-red/20">
+              {analysis.phishingSignals?.map((sig, idx) => (
+                <div key={idx} className="flex items-start gap-2">
+                  <AlertTriangle className={`w-4 h-4 mt-0.5 shrink-0 ${sig.severity === 'critical' ? 'text-danger-red' : 'text-warning-amber'}`} />
+                  <p className="font-sans text-xs font-semibold text-text-primary leading-tight">
+                    {sig.message}
+                  </p>
                 </div>
-              )}
+              ))}
             </div>
-          )}
-
-          {/* Layer 4: File Risk Banner */}
-          {risk && (
-            <div className={`px-3 py-3 bg-${risk.color}/10 border border-${risk.color}/30 rounded-lg`}>
-              <p className={`font-sans text-xs font-medium text-${risk.color} flex items-center gap-2`}>
-                <AlertTriangle className="w-3 h-3" />
-                {risk.label}
-              </p>
-              <p className={`font-sans text-xs text-${risk.color}/80 mt-1 ml-5`}>{risk.desc}</p>
-              <VirusScanButton url={analysis.cleanedUrl} />
-            </div>
-          )}
-
-          {/* Layer 5: Cleaned URL */}
-          <div className="bg-bg-light rounded-lg p-3 border border-border-light">
-            <p className="font-sans text-xs text-text-secondary mb-1">Cleaned URL</p>
-            <p className="font-mono text-sm text-primary-blue break-all">{analysis.cleanedUrl}</p>
           </div>
-
-          {/* New Feature: Redirect Chain Visualizer */}
-          {redirectChain && redirectChain.length > 1 && (
-            <div className="px-3 py-3 bg-bg-light border border-border-light rounded-lg">
-              <p className="font-sans text-xs font-medium text-text-secondary mb-2 flex items-center gap-1">
-                <ArrowRight className="w-3 h-3" />
-                Redirect Chain
-              </p>
-              <div className="space-y-2 relative">
-                <div className="absolute left-[7px] top-2 bottom-2 w-0.5 bg-border-light" />
-                {redirectChain.map((hop, i) => (
-                  <div key={i} className="flex gap-2 relative z-10">
-                    <div className={`w-4 h-4 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${i === redirectChain.length - 1 ? 'bg-primary-blue' : 'bg-bg-light border border-border-light'}`}>
-                      {i === redirectChain.length - 1 && <div className="w-1.5 h-1.5 bg-white rounded-full" />}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="font-mono text-[10px] text-text-secondary truncate">{getDomainFromUrl(hop.url) || hop.url}</p>
-                      <p className="font-sans text-[10px] bg-white border border-border-light px-1.5 py-0.5 rounded w-fit text-text-muted mt-0.5">HTTP {hop.status}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* New Feature: Domain Trust Analyzer Scorecard */}
-          <div className="bg-white border border-border-light rounded-lg overflow-hidden">
-            <div className="px-3 py-2 bg-bg-light border-b border-border-light flex items-center gap-2">
-              <Shield className="w-4 h-4 text-primary-blue" />
-              <span className="font-sans text-xs font-semibold text-text-primary">Domain Trust Analyzer</span>
-            </div>
-
-            {loadingTrust ? (
-              <div className="p-4 flex flex-col items-center justify-center space-y-2">
-                <Loader2 className="w-4 h-4 text-primary-blue animate-spin" />
-                <span className="font-sans text-xs text-text-secondary">Querying WHOIS & RDAP...</span>
-              </div>
-            ) : trustInfo ? (
-              <div className="p-3">
-                <div className="flex items-end justify-between mb-4 border-b border-border-light pb-3">
-                  <div>
-                    <span className="font-sans text-[10px] text-text-secondary uppercase tracking-wider block mb-1">Trust Score</span>
-                    <span className={`font-sans text-3xl font-bold ${trustInfo.trustScore >= 70 ? 'text-success-green' : trustInfo.trustScore >= 40 ? 'text-warning-amber' : 'text-danger-red'}`}>
-                      {trustInfo.trustScore}<span className="text-sm text-text-muted font-normal">/100</span>
-                    </span>
-                  </div>
-                  <div className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider ${trustInfo.trustScore >= 70 ? 'bg-success-green/10 text-success-green' : trustInfo.trustScore >= 40 ? 'bg-warning-amber/10 text-warning-amber' : 'bg-danger-red/10 text-danger-red'}`}>
-                    {trustInfo.trustScore >= 70 ? 'Reputable' : trustInfo.trustScore >= 40 ? 'Caution' : 'High Risk'}
-                  </div>
-                </div>
-
-                <div className="space-y-2.5">
-                  <div className="flex items-center gap-2">
-                    {trustInfo.domainAgeDays !== null ? (
-                      trustInfo.domainAgeDays < 30 ? <AlertTriangle className="w-4 h-4 text-danger-red" /> : <Clock className="w-4 h-4 text-success-green" />
-                    ) : (
-                      <Globe className="w-4 h-4 text-text-secondary" />
-                    )}
-                    <span className="font-sans text-xs text-text-primary">
-                      {trustInfo.domainAgeDays !== null
-                        ? `Domain created ${trustInfo.domainAgeDays} days ago ${trustInfo.domainAgeDays < 30 ? '🚨' : ''}`
-                        : 'Domain age hidden / private'}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    {trustInfo.tldSuspicious ? <AlertTriangle className="w-4 h-4 text-danger-red" /> : <Shield className="w-4 h-4 text-success-green" />}
-                    <span className="font-sans text-xs text-text-primary">
-                      {trustInfo.tldSuspicious ? `Suspicious TLD (${analysis.domain.substring(analysis.domain.lastIndexOf('.'))})` : 'Standard TLD (.com, .org, etc)'}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    {trustInfo.hasHttps ? <Lock className="w-4 h-4 text-success-green" /> : <Unlock className="w-4 h-4 text-danger-red" />}
-                    <span className="font-sans text-xs text-text-primary">
-                      {trustInfo.hasHttps ? 'HTTPS connection established' : 'Insecure HTTP connection 🚨'}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <p className="font-sans text-[10px] text-text-muted mt-1 italic">Registrar: {trustInfo.registrar}</p>
-                  </div>
-                </div>
-              </div>
-            ) : null}
-          </div>
-
-          {/* Layer 6: Destination Identity */}
-          <div className="flex items-center gap-3">
-            {!metadataLoaded ? (
-              <div className="flex items-center gap-3 w-full">
-                <div className="w-8 h-8 bg-border-light rounded-lg animate-shimmer" />
-                <div className="flex-1 space-y-1">
-                  <div className="h-3 w-32 bg-border-light rounded animate-shimmer" />
-                  <div className="h-2 w-20 bg-border-light rounded animate-shimmer" />
-                </div>
-              </div>
-            ) : (
-              <>
+        ) : isClean ? (
+          <div className="p-4 space-y-4">
+            {/* Simple Clean UI Header */}
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
                 <img
                   src={analysis.favicon}
                   alt=""
                   className="w-8 h-8 rounded-lg"
                   onError={(e) => { (e.target as HTMLImageElement).src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">&#127760;</text></svg>'; }}
                 />
-                <div className="flex-1 min-w-0">
-                  <p className="font-sans text-sm font-medium text-text-primary truncate">{analysis.title || analysis.domain}</p>
-                  <div className="flex items-center gap-2">
-                    {threatStatus === 'checking' ? (
-                      <>
-                        <Loader2 className="w-3 h-3 text-primary-blue animate-spin" />
-                        <span className="font-sans text-xs text-primary-blue">Checking safety...</span>
-                      </>
-                    ) : threatStatus === 'safe' && analysis.fileRisk === 'none' ? (
-                      <>
-                        <div className="w-1.5 h-1.5 rounded-full bg-success-green" />
-                        <span className="font-sans text-xs text-success-green">No Threats Detected</span>
-                      </>
-                    ) : (
-                      <>
-                        <div className="w-1.5 h-1.5 rounded-full bg-danger-red" />
-                        <span className="font-sans text-xs text-danger-red">
-                          {threatReason || 'Proceed with Caution'}
-                        </span>
-                      </>
-                    )}
+                <div>
+                  <p className="font-sans text-sm font-medium text-text-primary truncate">{analysis.domain}</p>
+                  <p className="font-sans text-xs text-text-secondary">{analysis.category.icon} {analysis.category.label}</p>
+                </div>
+              </div>
+              {/* Category-aware badge */}
+              {analysis.category.riskLevel === 'danger' ? (
+                <div className="flex items-center gap-1.5 px-2 py-1 bg-danger-red/10 rounded-lg border border-danger-red/20">
+                  <AlertTriangle className="w-3.5 h-3.5 text-danger-red" />
+                  <span className="font-sans text-xs font-medium text-danger-red">{analysis.category.label}</span>
+                </div>
+              ) : analysis.category.riskLevel === 'caution' ? (
+                <div className="flex items-center gap-1.5 px-2 py-1 bg-warning-amber/10 rounded-lg border border-warning-amber/20">
+                  <AlertTriangle className="w-3.5 h-3.5 text-warning-amber" />
+                  <span className="font-sans text-xs font-medium text-warning-amber">{analysis.category.label}</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5 px-2 py-1 bg-success-green/10 rounded-lg border border-success-green/20">
+                  <ShieldCheck className="w-3.5 h-3.5 text-success-green" />
+                  <span className="font-sans text-xs font-medium text-success-green">Safe</span>
+                </div>
+              )}
+            </div>
+
+            {/* Category warning for risky-but-GSB-safe sites */}
+            {analysis.category.riskLevel === 'danger' && (
+              <div className="px-3 py-2.5 bg-danger-red/5 border border-danger-red/20 rounded-lg">
+                <p className="font-sans text-xs font-semibold text-danger-red flex items-center gap-2">
+                  <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
+                  {analysis.category.category === 'gambling' && '⚠️ This is a gambling/betting site. Proceed with caution.'}
+                  {analysis.category.category === 'adult' && '🔞 This site contains adult content. Age 18+ required.'}
+                  {analysis.category.category === 'file-download' && '⬇️ This site hosts file downloads. Verify before downloading.'}
+                </p>
+              </div>
+            )}
+            {analysis.category.riskLevel === 'caution' && (
+              <div className="px-3 py-2.5 bg-warning-amber/5 border border-warning-amber/20 rounded-lg">
+                <p className="font-sans text-xs font-semibold text-warning-amber flex items-center gap-2">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                  {analysis.category.category === 'crypto' && '💰 Cryptocurrency site — high scam risk. Never share seed phrases.'}
+                  {analysis.category.category === 'gaming' && '🎮 Gaming site — may contain aggressive ads or prompts.'}
+                  {analysis.category.category === 'pharma' && '💊 Online pharmacy — verify it is licensed before purchasing.'}
+                </p>
+              </div>
+            )}
+
+            {/* Tracker count if any */}
+            {analysis.trackersRemoved > 0 && (
+              <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-primary-light border border-primary-blue/30 rounded-lg">
+                <Scissors className="w-3 h-3 text-primary-blue" />
+                <span className="font-sans text-xs font-medium text-primary-blue">
+                  {analysis.trackersRemoved} tracker{analysis.trackersRemoved > 1 ? 's' : ''} removed
+                </span>
+              </div>
+            )}
+
+            {/* Threat status */}
+            {threatStatus === 'safe' && (
+              <div className="flex items-center gap-2 px-3 py-2 bg-success-green/5 border border-success-green/20 rounded-lg">
+                <ShieldCheck className="w-4 h-4 text-success-green" />
+                <span className="font-sans text-xs font-medium text-success-green">No Threats Detected</span>
+                <span className="font-sans text-[10px] text-text-muted ml-auto">Google Safe Browsing + local analysis clear</span>
+              </div>
+            )}
+
+            {/* Domain Age */}
+            {analysis.domainAgeDays !== undefined && (
+              <div className="flex items-center gap-2 px-3 py-2 bg-bg-light border border-border-light rounded-lg">
+                <Calendar className="w-4 h-4 text-text-secondary" />
+                <span className="font-sans text-xs font-medium text-text-primary">
+                  Domain Age: {analysis.domainAgeDays !== null ? `${analysis.domainAgeDays} days` : 'Unknown'}
+                </span>
+                {analysis.domainAgeDays !== null && analysis.domainAgeDays < 30 && (
+                  <span className="font-sans text-[10px] text-danger-red ml-auto font-bold uppercase tracking-wide bg-danger-red/10 px-2 py-0.5 rounded">
+                    New Domain
+                  </span>
+                )}
+              </div>
+            )}
+
+            <div className="border-t border-border-light" />
+          </div>
+        ) : null}
+
+        <div className={`p-4 ${isClean ? 'pt-0' : 'space-y-3'}`}>
+          {!isClean && (
+            <>
+              {/* Layer 2: Tracker Badge */}
+              {analysis.trackersRemoved > 0 && (
+                <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-primary-light border border-primary-blue/30 rounded-lg">
+                  <Scissors className="w-3 h-3 text-primary-blue" />
+                  <span className="font-sans text-xs font-medium text-primary-blue">
+                    {analysis.trackersRemoved} tracker{analysis.trackersRemoved > 1 ? 's' : ''} removed
+                  </span>
+                </div>
+              )}
+
+              {/* Layer 3: Shortener Warning */}
+              {analysis.isShortener && (
+                <div className="px-3 py-2 bg-warning-amber/10 border border-warning-amber/30 rounded-lg">
+                  <p className="font-sans text-xs font-medium text-warning-amber flex items-center gap-2">
+                    <AlertTriangle className="w-3 h-3" />
+                    Shortened URL {analysis.resolvedUrl ? '— Resolved' : '— Resolving Destination'}
+                  </p>
+                  {analysis.resolvedUrl ? (
+                    <p className="font-mono text-xs text-warning-amber/80 mt-1 ml-5 break-all">
+                      → {analysis.resolvedUrl}
+                    </p>
+                  ) : (
+                    <div className="flex items-center gap-2 mt-1 ml-5">
+                      <Loader2 className="w-3 h-3 text-warning-amber animate-spin" />
+                      <span className="font-sans text-xs text-warning-amber/70">Following redirects...</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Layer 4: File Risk Banner */}
+              {risk && (
+                <div className={`px-3 py-3 bg-${risk.color}/10 border border-${risk.color}/30 rounded-lg`}>
+                  <p className={`font-sans text-xs font-medium text-${risk.color} flex items-center gap-2`}>
+                    <AlertTriangle className="w-3 h-3" />
+                    {risk.label}
+                  </p>
+                  <p className={`font-sans text-xs text-${risk.color}/80 mt-1 ml-5`}>{risk.desc}</p>
+                  <VirusScanButton url={analysis.cleanedUrl} />
+                </div>
+              )}
+
+              {/* Layer 4b: Category Badge */}
+              {analysis.category.category !== 'unknown' && (
+                <div className={`px-3 py-2 rounded-lg border flex items-center gap-2
+                  ${analysis.category.riskLevel === 'danger' ? 'bg-danger-red/10 border-danger-red/30 text-danger-red' : ''}
+                  ${analysis.category.riskLevel === 'caution' ? 'bg-warning-amber/10 border-warning-amber/30 text-warning-amber' : ''}
+                  ${analysis.category.riskLevel === 'trusted' ? 'bg-success-green/10 border-success-green/30 text-success-green' : ''}
+                  ${(analysis.category.riskLevel === 'low' || analysis.category.riskLevel === 'neutral') ? 'bg-primary-blue/5 border-primary-blue/20 text-primary-blue' : ''}
+                `}>
+                  <span className="text-sm">{analysis.category.icon}</span>
+                  <span className="font-sans text-xs font-semibold">{analysis.category.label} Site Detected</span>
+                  {(analysis.category.filterType === 'block' || analysis.category.filterType === 'warn') && (
+                    <span className="ml-auto flex items-center gap-1 text-[10px] uppercase font-bold tracking-wider opacity-80 bg-black/5 px-1.5 py-0.5 rounded">
+                      <ShieldAlert className="w-3 h-3" /> Filter Active
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {/* Layer 5: Cleaned URL */}
+              <div className="bg-bg-light rounded-lg p-3 border border-border-light">
+                <p className="font-sans text-xs text-text-secondary mb-1">Cleaned URL</p>
+                <p className="font-mono text-sm text-primary-blue break-all">{analysis.cleanedUrl}</p>
+              </div>
+
+              {/* New Feature: Redirect Chain Visualizer */}
+              {redirectChain && redirectChain.length > 1 && (
+                <div className="px-3 py-3 bg-bg-light border border-border-light rounded-lg">
+                  <p className="font-sans text-xs font-medium text-text-secondary mb-2 flex items-center gap-1">
+                    <ArrowRight className="w-3 h-3" />
+                    Redirect Chain
+                  </p>
+                  <div className="space-y-2 relative">
+                    <div className="absolute left-[7px] top-2 bottom-2 w-0.5 bg-border-light" />
+                    {redirectChain.map((hop, i) => (
+                      <div key={i} className="flex gap-2 relative z-10">
+                        <div className={`w-4 h-4 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${i === redirectChain.length - 1 ? 'bg-primary-blue' : 'bg-bg-light border border-border-light'}`}>
+                          {i === redirectChain.length - 1 && <div className="w-1.5 h-1.5 bg-white rounded-full" />}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="font-mono text-[10px] text-text-secondary truncate">{getDomainFromUrl(hop.url) || hop.url}</p>
+                          <p className="font-sans text-[10px] bg-white border border-border-light px-1.5 py-0.5 rounded w-fit text-text-muted mt-0.5">HTTP {hop.status}</p>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
-              </>
-            )}
-          </div>
+              )}
 
-          {/* Layer 7: Action Button */}
-          {metadataLoaded && getActionButton()}
+
+              {/* Layer 6: Destination Identity */}
+              <div className="flex items-center gap-3">
+                {!metadataLoaded ? (
+                  <div className="flex items-center gap-3 w-full">
+                    <div className="w-8 h-8 bg-border-light rounded-lg animate-shimmer" />
+                    <div className="flex-1 space-y-1">
+                      <div className="h-3 w-32 bg-border-light rounded animate-shimmer" />
+                      <div className="h-2 w-20 bg-border-light rounded animate-shimmer" />
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <img
+                      src={analysis.favicon}
+                      alt=""
+                      className="w-8 h-8 rounded-lg"
+                      onError={(e) => { (e.target as HTMLImageElement).src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">&#127760;</text></svg>'; }}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <p className="font-sans text-sm font-medium text-text-primary truncate">{analysis.title || analysis.domain}</p>
+                      <div className="flex items-center gap-2">
+                        {threatStatus === 'checking' ? (
+                          <>
+                            <Loader2 className="w-3 h-3 text-primary-blue animate-spin" />
+                            <span className="font-sans text-xs text-primary-blue">Checking safety...</span>
+                          </>
+                        ) : threatStatus === 'safe' && analysis.fileRisk === 'none' ? (
+                          <>
+                            <div className="w-1.5 h-1.5 rounded-full bg-success-green" />
+                            <span className="font-sans text-xs text-success-green">No Threats Detected</span>
+                          </>
+                        ) : (
+                          <>
+                            <div className="w-1.5 h-1.5 rounded-full bg-danger-red" />
+                            <span className="font-sans text-xs text-danger-red">
+                              {threatReason || 'Proceed with Caution'}
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            </>
+          )}
+
+          {/* Layer 7: Action Buttons */}
+          {metadataLoaded && getActionButtons()}
 
           {/* Content Preview (only for non-dangerous files) */}
           {analysis.fileRisk === 'none' && (
@@ -1150,7 +1212,7 @@ function PreviewCard({ analysis, onDismiss }: { analysis: LinkAnalysis; onDismis
                     <Camera className="w-8 h-8 text-text-secondary mb-2" />
                     <p className="font-sans text-xs text-text-secondary">Screenshot Unavailable</p>
                   </div>
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/30">
                     <div className="flex items-center gap-2 px-4 py-2 bg-primary-blue text-white rounded-lg">
                       <ExternalLink className="w-4 h-4" />
                       <span className="font-sans text-xs font-medium">Open Preview</span>
@@ -1175,6 +1237,106 @@ function PreviewCard({ analysis, onDismiss }: { analysis: LinkAnalysis; onDismis
       </div>
 
       <BrowserModal url={analysis.cleanedUrl} open={showBrowser} onClose={() => setShowBrowser(false)} />
+
+      {/* Warning Category Modal */}
+      <Dialog open={showWarningModal} onOpenChange={setShowWarningModal}>
+        <DialogContent className="max-w-sm rounded-[24px] p-6 bg-white gap-0 border-0 shadow-model text-center">
+          <div className="mx-auto w-16 h-16 bg-bg-light rounded-full flex items-center justify-center text-3xl mb-4 border border-border-light shadow-sm">
+            {analysis.category.icon}
+          </div>
+
+          <h2 className="font-sans text-lg font-bold text-text-primary mb-1">
+            {analysis.category.label} Site Detected
+          </h2>
+          <p className="font-mono text-sm text-primary-blue truncate px-4 bg-primary-light/50 py-1.5 rounded-lg mb-4">
+            {analysis.domain}
+          </p>
+
+          <div className="flex justify-center gap-4 mb-5">
+            <div className="flex flex-col items-center">
+              <span className="text-2xl font-bold text-text-primary mb-1 inline-flex items-center gap-1.5">
+                {analysis.category.icon}
+              </span>
+              <span className="font-sans text-[10px] font-semibold text-text-secondary uppercase tracking-wider">
+                {analysis.category.label}
+              </span>
+            </div>
+
+            <div className="w-px h-10 bg-border-light self-center" />
+
+            <div className="flex flex-col items-center">
+              <span className="text-xl font-bold text-text-primary mb-1 inline-flex items-center gap-1">
+                🔍 {analysis.trackersRemoved}
+              </span>
+              <span className="font-sans text-[10px] font-semibold text-text-secondary uppercase tracking-wider">
+                Trackers
+              </span>
+            </div>
+
+            <div className="w-px h-10 bg-border-light self-center" />
+
+            <div className="flex flex-col items-center">
+              <span className={`text-xl font-bold mb-1 inline-flex items-center gap-1 ${analysis.cleanedUrl.startsWith('https://') ? 'text-success-green' : 'text-warning-amber'}`}>
+                {analysis.cleanedUrl.startsWith('https://') ? '🔒' : '⚠️'}
+              </span>
+              <span className="font-sans text-[10px] font-semibold text-text-secondary uppercase tracking-wider">
+                {analysis.cleanedUrl.startsWith('https://') ? 'HTTPS' : 'HTTP'}
+              </span>
+            </div>
+
+            <div className="w-px h-10 bg-border-light self-center" />
+
+            <div className="flex flex-col items-center">
+              <span className={`text-xl font-bold mb-1 inline-flex items-center gap-1 ${typeof analysis.domainAgeDays === 'number' && analysis.domainAgeDays < 30 ? 'text-danger-red' : 'text-text-primary'}`}>
+                {analysis.domainAgeDays ?? '?'}
+                <span className="text-xs font-normal text-text-muted">d</span>
+              </span>
+              <span className="font-sans text-[10px] font-semibold text-text-secondary uppercase tracking-wider">
+                Domain Age
+              </span>
+            </div>
+          </div>
+
+          <div className="bg-bg-light rounded-xl p-4 text-left border border-border-light mb-6 relative overflow-hidden">
+            <div className={`absolute top-0 left-0 bottom-0 w-1 ${analysis.category.filterType === 'block' ? 'bg-danger-red' : 'bg-warning-amber'
+              }`} />
+            <p className="font-sans text-sm text-text-secondary leading-relaxed pl-2">
+              {analysis.category.category === 'gambling' && 'This site promotes online gambling or betting. Many gambling sites target users with deceptive ads and may be unlicensed in your region.'}
+              {analysis.category.category === 'adult' && 'This site contains adult content. Ensure you are of legal age in your region before continuing.'}
+              {analysis.category.category === 'file-download' && 'This site distributes downloadable files. Downloaded files may contain malware, especially cracked software or APKs.'}
+              {analysis.category.category === 'crypto' && 'Cryptocurrency sites have a high rate of scams and phishing. "Free crypto" and "airdrop" offers are almost always fraudulent.'}
+              {analysis.category.category === 'gaming' && 'Some gaming sites serve aggressive ads or prompt downloads. Proceed with caution on unfamiliar sites.'}
+              {analysis.category.category === 'pharma' && 'Online pharmacy sites can be unlicensed or sell counterfeit medications. Only use verified, licensed pharmacies.'}
+            </p>
+          </div>
+
+          <div className="space-y-3">
+            <button
+              onClick={() => {
+                window.open(intendedUrl, '_blank');
+                setShowWarningModal(false);
+              }}
+              className={`w-full py-3.5 font-sans text-sm font-bold rounded-xl transition-all border ${analysis.category.filterType === 'block'
+                ? 'border-danger-red/20 text-danger-red hover:bg-danger-red/10'
+                : 'border-warning-amber/30 text-warning-amber hover:bg-warning-amber/10'
+                }`}
+            >
+              Open Anyway — {
+                analysis.category.category === 'adult' ? "I'm of legal age" :
+                  analysis.category.category === 'file-download' || analysis.category.category === 'pharma' ? 'I trust this source' :
+                    analysis.category.category === 'gaming' ? 'Proceed' :
+                      'I understand the risk'
+              }
+            </button>
+            <button
+              onClick={() => setShowWarningModal(false)}
+              className="w-full py-3.5 bg-primary-blue text-white font-sans text-sm font-bold rounded-xl hover:bg-primary-blue/90 shadow-card transition-all"
+            >
+              Go Back — Keep me safe
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
@@ -1183,15 +1345,34 @@ function LinkShield() {
   const [url, setUrl] = useState('');
   const [showScanner, setShowScanner] = useState(false);
   const [analysis, setAnalysis] = useState<LinkAnalysis | null>(null);
+  const [isScanning, setIsScanning] = useState(false);
 
   const analyzeUrl = useCallback((value: string) => {
     if (isValidUrl(value)) {
+      setIsScanning(true);
       const { cleaned, removed } = cleanUrl(value);
       const domain = getDomainFromUrl(value);
       const { level, ext } = getFileRisk(value);
       const isShort = isShortener(value);
 
-      // Fetch metadata
+      // Phase 1: Instant local result — show immediately, no network needed
+      const instantAnalysis: LinkAnalysis = {
+        originalUrl: value,
+        cleanedUrl: cleaned,
+        trackersRemoved: removed,
+        isShortener: isShort,
+        fileRisk: level,
+        fileExtension: ext,
+        category: classifyLink(domain, ''),
+        domain,
+        title: domain,
+        description: '',
+        favicon: `https://www.google.com/s2/favicons?domain=${domain}&sz=64`,
+        phishingSignals: checkPhishingSignals(value, domain, domain, domain, false),
+      };
+      setAnalysis(instantAnalysis);
+
+      // Phase 2: Enhance with network metadata (title, description, login form scan)
       fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(value)}`)
         .then(r => r.json())
         .then(data => {
@@ -1199,23 +1380,25 @@ function LinkShield() {
           const titleMatch = html.match(/<meta property="og:title" content="([^"]+)"/) || html.match(/<title>([^<]+)/);
           const descMatch = html.match(/<meta property="og:description" content="([^"]+)"/) || html.match(/<meta name="description" content="([^"]+)"/);
 
-          const newAnalysis: LinkAnalysis = {
-            originalUrl: value,
-            cleanedUrl: cleaned,
-            trackersRemoved: removed,
-            isShortener: isShort,
-            fileRisk: level,
-            fileExtension: ext,
-            domain,
-            title: titleMatch?.[1]?.trim() || domain,
+          const title = titleMatch?.[1]?.trim() || domain;
+
+          // Login form scan using regex on fetched HTML
+          const hasPasswordField = /<input[^>]+type=["']?password["']?/i.test(html);
+          const hasEmailField = /<input[^>]+(type=["']?email["']?|name=["'][^"']*(email|user)[^"']*["'])/i.test(html);
+          const hasLoginForm = hasPasswordField && hasEmailField;
+
+          const pSignals = checkPhishingSignals(value, domain, domain, title, hasLoginForm);
+
+          setAnalysis(prev => prev ? {
+            ...prev,
+            category: classifyLink(domain, titleMatch?.[1] || ''),
+            title,
             description: descMatch?.[1]?.trim() || '',
-            favicon: `https://www.google.com/s2/favicons?domain=${domain}&sz=64`,
-          };
-          setAnalysis(newAnalysis);
+            phishingSignals: pSignals.length > 0 ? pSignals : prev.phishingSignals,
+          } : prev);
 
           // Resolve shortened URL destination
           if (isShort && data.status?.url) {
-            // allorigins returns the final URL after redirects in status.url
             const resolvedUrl = data.status.url;
             if (resolvedUrl !== value) {
               setAnalysis(prev => prev ? { ...prev, resolvedUrl } : prev);
@@ -1223,18 +1406,23 @@ function LinkShield() {
           }
         })
         .catch(() => {
-          setAnalysis({
-            originalUrl: value,
-            cleanedUrl: cleaned,
-            trackersRemoved: removed,
-            isShortener: isShort,
-            fileRisk: level,
-            fileExtension: ext,
-            domain,
-            title: domain,
-            description: '',
-            favicon: `https://www.google.com/s2/favicons?domain=${domain}&sz=64`,
-          });
+          // Keep the instant local analysis already shown
+        })
+        .finally(() => setIsScanning(false));
+
+      // Phase 3: Domain Age (RDAP)
+      const rootDomain = domain.split('.').slice(-2).join('.');
+      fetch(`https://rdap.org/domain/${rootDomain}`)
+        .then(r => r.json())
+        .then(data => {
+          const creationEvent = data.events?.find((e: any) => e.eventAction === 'registration');
+          if (creationEvent && creationEvent.eventDate) {
+            const domainAgeDays = Math.floor((Date.now() - new Date(creationEvent.eventDate).getTime()) / (1000 * 60 * 60 * 24));
+            setAnalysis(prev => prev ? { ...prev, domainAgeDays } : prev);
+          }
+        })
+        .catch(() => {
+          // Ignore RDAP failures
         });
     } else {
       setAnalysis(null);
@@ -1287,11 +1475,16 @@ function LinkShield() {
         </div>
         <button
           onClick={() => analyzeUrl(url)}
-          disabled={!url || !isValidUrl(url)}
-          className="px-6 h-12 bg-primary-blue text-white font-sans text-sm font-medium rounded-lg hover:bg-primary-blue/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-card flex items-center gap-2"
+          disabled={!url || !isValidUrl(url) || isScanning}
+          className={`px-6 h-12 text-white font-sans text-sm font-medium rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-card flex items-center gap-2 ${isScanning ? 'bg-emerald-500 animate-pulse' : 'bg-primary-blue hover:bg-primary-blue/90'
+            }`}
         >
-          <Search className="w-4 h-4" />
-          Scan
+          {isScanning ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <Search className="w-4 h-4" />
+          )}
+          {isScanning ? 'Scanning...' : 'Scan'}
         </button>
       </div>
 
@@ -1323,8 +1516,18 @@ function MediaScrubber() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { shareFile: nativeShare } = useNativeShare();
 
+  // ── Detect file type from MIME ──────────────────────────────────────────
+  const getFileType = (file: File): FileCard['type'] => {
+    if (file.type.startsWith('image/')) return 'image';
+    if (file.type === 'application/pdf') return 'document';
+    if (file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') return 'document';
+    if (file.name.endsWith('.docx')) return 'document';
+    if (file.name.endsWith('.pdf')) return 'document';
+    return 'video';
+  };
+
   const processFile = async (file: File) => {
-    const fileType = file.type.startsWith('image/') ? 'image' : 'video';
+    const fileType = getFileType(file);
     const base64Data = await fileToBase64(file);
 
     const newFile: FileCard = {
@@ -1339,13 +1542,12 @@ function MediaScrubber() {
 
     setFiles(prev => [...prev, newFile]);
 
-    // Real EXIF reading with exifr
     try {
       const metadata: FileCard['metadata'] = [];
       let cleanBase64Data = base64Data;
 
+      // ── Image EXIF processing ─────────────────────────────────────────
       if (fileType === 'image') {
-        // Read real EXIF data
         try {
           const exifData = await exifr.parse(file, {
             gps: true,
@@ -1353,7 +1555,6 @@ function MediaScrubber() {
           } as Parameters<typeof exifr.parse>[1]);
 
           if (exifData) {
-            // GPS coordinates
             if (exifData.latitude !== undefined && exifData.longitude !== undefined) {
               const latDir = exifData.latitude >= 0 ? 'N' : 'S';
               const lonDir = exifData.longitude >= 0 ? 'E' : 'W';
@@ -1362,16 +1563,12 @@ function MediaScrubber() {
                 value: `${Math.abs(exifData.latitude).toFixed(4)}°${latDir} ${Math.abs(exifData.longitude).toFixed(4)}°${lonDir}`,
               });
             }
-
-            // Device info
             if (exifData.Make || exifData.Model) {
               metadata.push({
                 type: 'device',
                 value: [exifData.Make, exifData.Model].filter(Boolean).join(' '),
               });
             }
-
-            // Software info
             if (exifData.Software) {
               metadata.push({
                 type: 'software',
@@ -1397,9 +1594,8 @@ function MediaScrubber() {
                 const ctx = canvas.getContext('2d');
                 if (ctx) {
                   ctx.drawImage(img, 0, 0);
-                  // Export as data URL — this strips all EXIF metadata
                   cleanBase64Data = canvas.toDataURL(file.type || 'image/jpeg', 0.95)
-                    .split(',')[1]; // Remove the data:image/...;base64, prefix
+                    .split(',')[1];
                 }
                 URL.revokeObjectURL(objectUrl);
                 resolve();
@@ -1416,6 +1612,132 @@ function MediaScrubber() {
           });
         } catch {
           // Canvas stripping failed, keep original
+        }
+      }
+
+      // ── PDF metadata processing ───────────────────────────────────────
+      if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
+        try {
+          const arrayBuffer = await file.arrayBuffer();
+          const pdfDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
+
+          // Read metadata
+          const title = pdfDoc.getTitle();
+          const author = pdfDoc.getAuthor();
+          const subject = pdfDoc.getSubject();
+          const creator = pdfDoc.getCreator();
+          const producer = pdfDoc.getProducer();
+          const keywords = pdfDoc.getKeywords();
+
+          if (author) metadata.push({ type: 'author', value: author });
+          if (title) metadata.push({ type: 'title', value: title });
+          if (subject) metadata.push({ type: 'title', value: `Subject: ${subject}` });
+          if (creator) metadata.push({ type: 'producer', value: `Creator: ${creator}` });
+          if (producer) metadata.push({ type: 'producer', value: `Producer: ${producer}` });
+          if (keywords) metadata.push({ type: 'software', value: `Keywords: ${keywords}` });
+
+          // Strip all metadata
+          pdfDoc.setTitle('');
+          pdfDoc.setAuthor('');
+          pdfDoc.setSubject('');
+          pdfDoc.setCreator('');
+          pdfDoc.setProducer('');
+          pdfDoc.setKeywords([]);
+          pdfDoc.setCreationDate(new Date(0));
+          pdfDoc.setModificationDate(new Date(0));
+
+          const cleanPdfBytes = await pdfDoc.save();
+          // Convert Uint8Array to base64
+          let binary = '';
+          const bytes = new Uint8Array(cleanPdfBytes);
+          for (let i = 0; i < bytes.byteLength; i++) {
+            binary += String.fromCharCode(bytes[i]);
+          }
+          cleanBase64Data = btoa(binary);
+        } catch (err) {
+          console.error('PDF metadata error:', err);
+        }
+      }
+
+      // ── DOCX metadata processing ──────────────────────────────────────
+      if (
+        file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+        file.name.endsWith('.docx')
+      ) {
+        try {
+          const arrayBuffer = await file.arrayBuffer();
+          const zip = await JSZip.loadAsync(arrayBuffer);
+
+          // Read core.xml (author, title, subject, etc.)
+          const coreXmlFile = zip.file('docProps/core.xml');
+          if (coreXmlFile) {
+            const coreXml = await coreXmlFile.async('string');
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(coreXml, 'application/xml');
+
+            // Extract metadata from core.xml
+            const getTagText = (tagName: string): string => {
+              const el = doc.getElementsByTagName(tagName)[0] ||
+                doc.querySelector(`[*|${tagName.split(':').pop()}]`);
+              return el?.textContent?.trim() || '';
+            };
+
+            const author = getTagText('dc:creator');
+            const lastModBy = getTagText('cp:lastModifiedBy');
+            const dcTitle = getTagText('dc:title');
+            const dcSubject = getTagText('dc:subject');
+            const category = getTagText('cp:category');
+
+            if (author) metadata.push({ type: 'author', value: author });
+            if (lastModBy && lastModBy !== author) metadata.push({ type: 'author', value: `Last modified: ${lastModBy}` });
+            if (dcTitle) metadata.push({ type: 'title', value: dcTitle });
+            if (dcSubject) metadata.push({ type: 'title', value: `Subject: ${dcSubject}` });
+            if (category) metadata.push({ type: 'software', value: `Category: ${category}` });
+
+            // Strip core.xml — blank out all sensitive fields
+            const blankCore = coreXml
+              .replace(/<dc:creator>[^<]*<\/dc:creator>/g, '<dc:creator></dc:creator>')
+              .replace(/<cp:lastModifiedBy>[^<]*<\/cp:lastModifiedBy>/g, '<cp:lastModifiedBy></cp:lastModifiedBy>')
+              .replace(/<dc:title>[^<]*<\/dc:title>/g, '<dc:title></dc:title>')
+              .replace(/<dc:subject>[^<]*<\/dc:subject>/g, '<dc:subject></dc:subject>')
+              .replace(/<dc:description>[^<]*<\/dc:description>/g, '<dc:description></dc:description>')
+              .replace(/<cp:category>[^<]*<\/cp:category>/g, '<cp:category></cp:category>')
+              .replace(/<cp:keywords>[^<]*<\/cp:keywords>/g, '<cp:keywords></cp:keywords>');
+            zip.file('docProps/core.xml', blankCore);
+          }
+
+          // Read app.xml (company, manager, application)
+          const appXmlFile = zip.file('docProps/app.xml');
+          if (appXmlFile) {
+            const appXml = await appXmlFile.async('string');
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(appXml, 'application/xml');
+
+            const getTagText = (tagName: string): string => {
+              const el = doc.getElementsByTagName(tagName)[0];
+              return el?.textContent?.trim() || '';
+            };
+
+            const company = getTagText('Company');
+            const manager = getTagText('Manager');
+            const application = getTagText('Application');
+
+            if (company) metadata.push({ type: 'company', value: company });
+            if (manager) metadata.push({ type: 'author', value: `Manager: ${manager}` });
+            if (application) metadata.push({ type: 'producer', value: application });
+
+            // Strip app.xml
+            const blankApp = appXml
+              .replace(/<Company>[^<]*<\/Company>/g, '<Company></Company>')
+              .replace(/<Manager>[^<]*<\/Manager>/g, '<Manager></Manager>');
+            zip.file('docProps/app.xml', blankApp);
+          }
+
+          // Re-zip and convert to base64
+          const cleanZip = await zip.generateAsync({ type: 'base64' });
+          cleanBase64Data = cleanZip;
+        } catch (err) {
+          console.error('DOCX metadata error:', err);
         }
       }
 
@@ -1443,7 +1765,7 @@ function MediaScrubber() {
     setIsDragging(false);
 
     const droppedFiles = Array.from(e.dataTransfer.files).filter(
-      f => f.type.startsWith('image/') || f.type.startsWith('video/')
+      f => f.type.startsWith('image/') || f.type.startsWith('video/') || f.type === 'application/pdf' || f.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || f.name.endsWith('.docx') || f.name.endsWith('.pdf')
     );
 
     droppedFiles.forEach(processFile);
@@ -1460,7 +1782,7 @@ function MediaScrubber() {
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFiles = Array.from(e.target.files || []).filter(
-      f => f.type.startsWith('image/') || f.type.startsWith('video/')
+      f => f.type.startsWith('image/') || f.type.startsWith('video/') || f.type === 'application/pdf' || f.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || f.name.endsWith('.docx') || f.name.endsWith('.pdf')
     );
 
     selectedFiles.forEach(processFile);
@@ -1513,6 +1835,14 @@ function MediaScrubber() {
         return 'bg-warning-amber/10 text-warning-amber border-warning-amber/30';
       case 'software':
         return 'bg-info-blue/10 text-info-blue border-info-blue/30';
+      case 'author':
+        return 'bg-purple-500/10 text-purple-600 border-purple-300';
+      case 'title':
+        return 'bg-indigo-500/10 text-indigo-600 border-indigo-300';
+      case 'producer':
+        return 'bg-cyan-500/10 text-cyan-600 border-cyan-300';
+      case 'company':
+        return 'bg-orange-500/10 text-orange-600 border-orange-300';
       default:
         return 'bg-success-green/10 text-success-green border-success-green/30';
     }
@@ -1526,6 +1856,14 @@ function MediaScrubber() {
         return <Smartphone className="w-3 h-3" />;
       case 'software':
         return <Wrench className="w-3 h-3" />;
+      case 'author':
+        return <User className="w-3 h-3" />;
+      case 'title':
+        return <Type className="w-3 h-3" />;
+      case 'producer':
+        return <FileText className="w-3 h-3" />;
+      case 'company':
+        return <Building2 className="w-3 h-3" />;
       default:
         return <Check className="w-3 h-3" />;
     }
@@ -1554,15 +1892,15 @@ function MediaScrubber() {
           ref={fileInputRef}
           type="file"
           multiple
-          accept="image/*,video/*"
+          accept="image/*,video/*,.pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
           onChange={handleFileSelect}
           className="hidden"
         />
         <div className="flex flex-col items-center gap-3">
           <Upload className={`w-8 h-8 ${isDragging ? 'text-primary-blue' : 'text-text-secondary'}`} />
           <div className="text-center">
-            <p className="font-sans text-sm font-medium text-text-primary">Drop images / videos here</p>
-            <p className="font-sans text-xs text-text-secondary mt-1">EXIF · GPS · Device data stripped</p>
+            <p className="font-sans text-sm font-medium text-text-primary">Drop images, videos, PDF or DOCX</p>
+            <p className="font-sans text-xs text-text-secondary mt-1">EXIF · GPS · Author · Device data stripped</p>
           </div>
         </div>
       </div>
@@ -1634,10 +1972,318 @@ function MediaScrubber() {
   );
 }
 
+// ── Screenshot Privacy Guard ─────────────────────────────────────────────────
+
+function ScreenshotPrivacyGuard() {
+  const [imageBase64, setImageBase64] = useState<string | null>(null);
+  const [imageName, setImageName] = useState<string>('');
+  const [scanning, setScanning] = useState(false);
+  const [findings, setFindings] = useState<ScreenshotFinding[]>([]);
+  const [appContext, setAppContext] = useState<string | null>(null);
+  const [scanned, setScanned] = useState(false);
+  const [showEditor, setShowEditor] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const { shareFile } = useNativeShare();
+
+  // ── Direct share (no blur needed) ───────────────────────────────────────
+  const handleDirectShare = useCallback(async () => {
+    if (!imageBase64) return;
+    await shareFile('seycure_screenshot.png', imageBase64, 'image/png', 'Share screenshot');
+  }, [imageBase64, shareFile]);
+
+  // ── Direct save (no blur needed) ────────────────────────────────────────
+  const handleDirectSave = useCallback(async () => {
+    if (!imageBase64) return;
+    setSaving(true);
+    try {
+      const fileName = `seycure_clean_${Date.now()}.png`;
+      await Filesystem.writeFile({
+        path: `Documents/${fileName}`,
+        data: imageBase64,
+        directory: Directory.ExternalStorage,
+        recursive: true,
+      });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+    } catch (error) {
+      console.error('Save error:', error);
+      // Fallback: trigger browser download
+      const link = document.createElement('a');
+      link.download = `seycure_clean_${Date.now()}.png`;
+      link.href = `data:image/png;base64,${imageBase64}`;
+      link.click();
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+    } finally {
+      setSaving(false);
+    }
+  }, [imageBase64]);
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    loadImage(file);
+  };
+
+  const loadImage = (file: File) => {
+    setImageName(file.name);
+    setFindings([]);
+    setScanned(false);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = (reader.result as string).split(',')[1];
+      setImageBase64(base64);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleScan = async () => {
+    if (!imageBase64) return;
+    setScanning(true);
+    try {
+      const result = await analyzeScreenshot(imageBase64);
+      setFindings(result.findings);
+      setAppContext(result.appContext);
+      setScanned(true);
+    } catch (err) {
+      console.error('Scan error:', err);
+      setScanned(true);
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  const getSeverityStyle = (severity: string) => {
+    switch (severity) {
+      case 'critical': return 'bg-red-500/10 text-red-600 border-red-200';
+      case 'high': return 'bg-amber-500/10 text-amber-600 border-amber-200';
+      case 'medium': return 'bg-blue-500/10 text-blue-600 border-blue-200';
+      default: return 'bg-gray-500/10 text-gray-600 border-gray-200';
+    }
+  };
+
+  return (
+    <div className="space-y-4 p-4">
+      {/* Drop zone / image preview */}
+      <div
+        onClick={() => fileInputRef.current?.click()}
+        onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+        onDragLeave={() => setIsDragging(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setIsDragging(false);
+          const file = e.dataTransfer.files[0];
+          if (file) loadImage(file);
+        }}
+        className={`w-full py-8 px-4 border-2 border-dashed rounded-xl cursor-pointer transition-all ${isDragging
+          ? 'border-primary-blue bg-primary-light/50'
+          : imageBase64
+            ? 'border-green-300 bg-green-50'
+            : 'border-primary-blue/30 hover:border-primary-blue/60 bg-white'
+          }`}
+      >
+        {imageBase64 ? (
+          <div className="flex flex-col items-center gap-3">
+            <img
+              src={`data:image/png;base64,${imageBase64}`}
+              alt="Screenshot preview"
+              className="max-h-48 rounded-lg shadow-card object-contain"
+            />
+            <p className="font-sans text-xs text-text-secondary">{imageName}</p>
+            <p className="font-sans text-xs text-primary-blue">Tap to change image</p>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center gap-2">
+            <Eye className="w-8 h-8 text-primary-blue/60" />
+            <span className="font-sans text-sm font-medium text-primary-blue">Select Screenshot</span>
+            <span className="font-sans text-xs text-text-secondary">Tap or drag an image to scan for sensitive data</span>
+          </div>
+        )}
+      </div>
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        onChange={handleFileSelect}
+        className="hidden"
+      />
+
+      {/* Scan button */}
+      {imageBase64 && !scanned && (
+        <button
+          onClick={handleScan}
+          disabled={scanning}
+          className="w-full py-3 bg-primary-blue text-white font-sans text-sm font-medium rounded-xl hover:bg-primary-blue/90 disabled:opacity-60 transition-all shadow-card flex items-center justify-center gap-2"
+        >
+          {scanning ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Scanning with ML Kit OCR...
+            </>
+          ) : (
+            <>
+              <Search className="w-4 h-4" />
+              Scan for Sensitive Data
+            </>
+          )}
+        </button>
+      )}
+
+      {/* Results panel */}
+      {scanned && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="font-sans text-sm font-semibold text-text-primary">
+              {findings.length > 0 ? `${findings.length} sensitive item${findings.length > 1 ? 's' : ''} found` : 'No sensitive data detected'}
+            </h3>
+            {findings.length > 0 && (
+              <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-700 font-sans text-xs font-medium">
+                Action needed
+              </span>
+            )}
+          </div>
+
+          {findings.map((f, i) => (
+            <div key={i} className={`px-4 py-3 rounded-xl border ${getSeverityStyle(f.severity)} animate-fadeUp`} style={{ animationDelay: `${i * 80}ms` }}>
+              <div className="flex items-center justify-between">
+                <span className="font-sans text-xs font-semibold uppercase tracking-wide">{f.type}</span>
+                <span className="font-sans text-xs font-medium capitalize">{f.severity}</span>
+              </div>
+              <p className="font-mono text-sm mt-1">{f.redacted}</p>
+            </div>
+          ))}
+
+          {findings.length > 0 && (
+            <button
+              onClick={() => setShowEditor(true)}
+              className="w-full py-3 bg-gradient-to-r from-primary-blue to-blue-600 text-white font-sans text-sm font-medium rounded-xl hover:opacity-90 transition-all shadow-card flex items-center justify-center gap-2"
+            >
+              <EyeOff className="w-4 h-4" />
+              Open Blur Editor
+            </button>
+          )}
+
+          {findings.length === 0 && (
+            <>
+              {/* Clean status card */}
+              <div className="bg-green-50 border border-green-200 rounded-xl p-4 flex items-start gap-3 animate-fadeUp">
+                <ShieldCheck className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-sans text-sm font-semibold text-green-700">Your screenshot looks clean!</p>
+                  <p className="font-sans text-xs text-green-600 mt-1">No sensitive data was found. You can still preview and add manual blur if needed.</p>
+                </div>
+              </div>
+
+              {/* Preview & Add Blur */}
+              <button
+                onClick={() => setShowEditor(true)}
+                className="w-full py-3 bg-gradient-to-r from-primary-blue to-blue-600 text-white font-sans text-sm font-medium rounded-xl hover:opacity-90 transition-all shadow-card flex items-center justify-center gap-2"
+              >
+                <Eye className="w-4 h-4" />
+                Preview & Add Blur
+              </button>
+
+              {/* Direct Share / Save */}
+              <div className="flex gap-2">
+                <button
+                  onClick={handleDirectShare}
+                  className="flex-1 flex items-center justify-center gap-2 bg-primary-blue text-white px-4 py-2.5 rounded-xl font-sans text-xs font-medium hover:bg-primary-blue/90 transition-colors shadow-card"
+                >
+                  <Share2 className="w-3.5 h-3.5" />
+                  Share
+                </button>
+                <button
+                  onClick={handleDirectSave}
+                  disabled={saving}
+                  className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-sans text-xs font-medium transition-all shadow-card ${saved
+                    ? 'bg-green-500 text-white'
+                    : 'border border-primary-blue text-primary-blue hover:bg-primary-blue/10'
+                    }`}
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  {saving ? 'Saving...' : saved ? 'Saved ✓' : 'Save'}
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* Rescan button */}
+          <button
+            onClick={() => { setScanned(false); setFindings([]); }}
+            className="w-full py-2 text-primary-blue font-sans text-xs font-medium hover:underline flex items-center justify-center gap-1"
+          >
+            <RefreshCw className="w-3 h-3" />
+            Scan again
+          </button>
+        </div>
+      )}
+
+      {/* Blur Editor Modal */}
+      {imageBase64 && (
+        <BlurEditorModal
+          open={showEditor}
+          onClose={() => setShowEditor(false)}
+          imageBase64={imageBase64}
+          findings={findings}
+          appContext={appContext}
+        />
+      )}
+
+      {/* Learned Rules Settings */}
+      <div className="mt-4">
+        <LearnedRulesSettings />
+      </div>
+    </div>
+  );
+}
+
+// ── Media Scrubber Tab (Wrapper with Sub-Tabs) ──────────────────────────────
+
+function MediaScrubberTab({ mode, onModeChange }: { mode: AppMode; onModeChange: (m: AppMode) => void }) {
+  const subTab = mode === 'privacy-blur' ? 'privacy-blur' : 'media-scrubber';
+
+  return (
+    <div>
+      {/* Sub-tab segmented control */}
+      <div className="flex justify-center px-4 pb-2">
+        <div className="inline-flex bg-white rounded-lg p-0.5 shadow-card border border-border-light">
+          <button
+            onClick={() => onModeChange('media-scrubber')}
+            className={`px-4 py-2 rounded-md font-sans text-xs font-medium transition-all duration-150 flex items-center gap-1.5 ${subTab === 'media-scrubber'
+              ? 'bg-primary-blue text-white shadow-sm'
+              : 'text-text-secondary hover:text-text-primary'
+              }`}
+          >
+            <Scissors className="w-3.5 h-3.5" />
+            Media Scrubber
+          </button>
+          <button
+            onClick={() => onModeChange('privacy-blur')}
+            className={`px-4 py-2 rounded-md font-sans text-xs font-medium transition-all duration-150 flex items-center gap-1.5 ${subTab === 'privacy-blur'
+              ? 'bg-primary-blue text-white shadow-sm'
+              : 'text-text-secondary hover:text-text-primary'
+              }`}
+          >
+            <EyeOff className="w-3.5 h-3.5" />
+            Privacy Blur
+          </button>
+        </div>
+      </div>
+
+      {/* Sub-tab content */}
+      {subTab === 'media-scrubber' ? <MediaScrubber /> : <ScreenshotPrivacyGuard />}
+    </div>
+  );
+}
+
+
+
 function SplashScreen({ onComplete }: { onComplete: () => void }) {
   useEffect(() => {
-    // The CSS animation '.animate-splash-fade' takes 0.6s and has a 2.5s delay.
-    // So the total sequence is ~3.1s. Let's unmount it fully at 3.2s.
     const timer = setTimeout(() => {
       onComplete();
     }, 3200);
@@ -1664,16 +2310,29 @@ function App() {
   const [status] = useState<'idle' | 'scanning'>('idle');
   const [showSplash, setShowSplash] = useState(true);
 
+  const renderContent = () => {
+    switch (mode) {
+      case 'link-shield':
+        return <LinkShield />;
+      case 'media-scrubber':
+      case 'privacy-blur':
+        return <MediaScrubberTab mode={mode} onModeChange={setMode} />;
+
+      default:
+        return <LinkShield />;
+    }
+  };
+
   return (
     <div className="min-h-screen bg-bg-light">
       {showSplash && <SplashScreen onComplete={() => setShowSplash(false)} />}
 
       <div className="max-w-app mx-auto">
         <TopBar status={status} />
-        <ModeToggle mode={mode} onChange={setMode} />
+        <TabBar mode={mode} onChange={setMode} />
 
         <main className="pb-8">
-          {mode === 'link-shield' ? <LinkShield /> : <MediaScrubber />}
+          {renderContent()}
         </main>
       </div>
     </div>
