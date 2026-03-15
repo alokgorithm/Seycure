@@ -31,8 +31,11 @@ The Link Shield acts as a secure quarantine zone for URLs. It combines multiple 
 
 #### URL Input Methods
 - **Paste URL** — Paste any URL into the input field
-- **QR Code Scanner** — Scan QR codes using the device camera via `html5-qrcode`
+- **QR Code Scanner** — Scan QR codes using the device camera via `html5-qrcode`. Includes **Hardware Camera Zoom** slider that reads native optical zoom limits from the device sensor via WebRTC.
 - **From Gallery** — Select an image containing a QR code; the app decodes it locally
+
+#### Swipe Navigation
+- **Gesture Control** — Swipe left and right anywhere on the screen to seamlessly transition between the Link Shield, Media Scrubber, and Privacy Blur tabs with smooth fade animations.
 
 #### Layer 1: URL Cleaning & Tracker Removal
 - Automatically detects and strips **30+ known tracking parameters** (UTM, Facebook, Adobe, HubSpot, Mailchimp, etc.)
@@ -189,11 +192,12 @@ The Privacy Blur feature uses on-device ML to detect and redact sensitive text i
 | 1 | User `never_blur` rules | Skip — user explicitly marked as safe |
 | 2 | User `always_blur` rules | Force blur — user explicitly marked as sensitive |
 | 3 | App layout spatial memory | Match by Y-position for known apps (GPay, PhonePe, etc.) |
-| 4 | Built-in context-aware patterns | Aadhaar, PAN, Credit Cards, UPI IDs, Emails, Phones |
+| 4 | Built-in context-aware patterns | **15+ robust regex patterns** (Aadhaar, PAN, Passport, Voter ID, Driving License, Credit Cards, UPI IDs, IFSC, Bank Accounts, CVV, DOB, PIN, Emails, Phones, Named Fields) |
 
-4. **Context-Aware Classification** — 10–19 digit numbers are classified by surrounding text:
-   - Context contains "phone/mobile/contact" → blur as Phone Number
-   - Context contains "transaction/order/ref" → mark as Safe Reference (green highlight)
+4. **Context-Aware Classification & Safe Defaults** — 
+   - **Default Blur Policy**: *All* 10+ digit numbers blur by default to protect phone numbers and IDs.
+   - **Label Proximity**: Certain patterns (CVV, Bank Account, DOB, PIN) only trigger when found near a relevant text label to prevent false positives.
+   - **Safe References**: Fields with context like "transaction/order/ref/booking/PNR" bypass the default blur policy and are marked as Safe Reference (green highlight).
 5. **Auto-Blur** applies Gaussian blur to detected regions
 6. **Manual Blur Editor** — Users can add or remove blur regions
 7. **Learning on Save** — When user saves/shares:
@@ -467,6 +471,15 @@ flowchart LR
 ---
 
 ## 📋 Changelog
+
+### v2.4 — Comprehensive Detection & UI Polish
+- **New:** Massive update to Privacy Blur detection engine (15+ new patterns).
+- **New:** Auto-detects Aadhaar, PAN, Passport, Voter ID, Driving License, Bank Accounts, IFSC, CVV, DOB, PINs, Passwords, etc.
+- **Improved:** Strict-by-default blurring policy. All 10+ digit numbers blur automatically unless strongly authenticated as a non-sensitive reference (e.g. PNR, tracking number).
+- **New:** Context-required patterns. CVV and PINs only blur if a label actually exists next to them.
+- **New:** Swipe navigation gestures to move instantly between the 3 main tabs.
+- **New:** QR Code Scanner now includes a native Hardware Camera Zoom slider via WebRTC properties.
+- **New:** Integrated the official bespoke Seycure 3D Logo across the Android App Icon generator, Splash Screen, and internal React top-bar.
 
 ### v2.3 — On-Device Privacy Learning
 - **New:** 4-priority learning pipeline in OCR (user rules → app memory → built-in patterns)

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Shield, X, Camera, Link2, Image as ImageIcon, ExternalLink, AlertTriangle, Scissors, Check, ChevronRight, Upload, MapPin, Smartphone, Wrench, Download, Share2, Loader2, ArrowRight, Search, Eye, EyeOff, ShieldAlert, ShieldCheck, RefreshCw, FileText, User, Building2, Type, Calendar } from 'lucide-react';
+import { Shield, X, Camera, Link2, Image as ImageIcon, ExternalLink, AlertTriangle, Scissors, Check, ChevronRight, Upload, MapPin, Smartphone, Wrench, Download, Share2, Loader2, ArrowRight, Search, Eye, EyeOff, ShieldAlert, ShieldCheck, RefreshCw, FileText, User, Building2, Type, Calendar, ZoomIn, ZoomOut } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
 import exifr from 'exifr';
 import { PDFDocument } from 'pdf-lib';
@@ -210,7 +210,7 @@ function TopBar({ status }: { status: 'idle' | 'scanning' }) {
   return (
     <div className="flex items-center justify-between px-4 py-3 bg-white border-b border-border-light shadow-sm">
       <div className="flex items-center gap-3">
-        <img src="/arkqube-logo.png" alt="ArkQube" className="w-8 h-8 object-contain" />
+        <img src="/logo.png" alt="Seycure" className="w-8 h-8 object-contain rounded-md" />
         <div className="flex items-center gap-2">
           <span className="font-sans text-base font-semibold text-primary-dark">Seycure</span>
           <span className="text-text-muted text-sm">by</span>
@@ -261,10 +261,36 @@ function TabBar({ mode, onChange }: { mode: AppMode; onChange: (m: AppMode) => v
 
 function QRScannerModal({ open, onClose, onScan }: { open: boolean; onClose: () => void; onScan: (url: string) => void }) {
   const [phase, setPhase] = useState<'scanning' | 'detected' | 'timeout' | 'permission-denied' | 'error'>('scanning');
+  const [zoom, setZoom] = useState(1);
+  const [minZoom, setMinZoom] = useState(1);
+  const [maxZoom, setMaxZoom] = useState(1);
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
+
+  const handleZoomChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newZoom = Number(e.target.value);
+    setZoom(newZoom);
+    try {
+      const videoEl = document.querySelector('#seycure-qr-reader video') as HTMLVideoElement;
+      if (videoEl && videoEl.srcObject) {
+        const stream = videoEl.srcObject as MediaStream;
+        const track = stream.getVideoTracks()[0];
+        if (track) {
+          await track.applyConstraints({ advanced: [{ zoom: newZoom }] } as any);
+        }
+      }
+    } catch (err) {
+      console.warn('Zoom not supported by device hardware', err);
+      // Fallback: try html5-qrcode built-in if available
+      if (scannerRef.current && (scannerRef.current as any).applyVideoConstraints) {
+        try {
+          await (scannerRef.current as any).applyVideoConstraints({ advanced: [{ zoom: newZoom }] });
+        } catch (e) {}
+      }
+    }
+  };
 
   const handleScanFromGallery = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -370,6 +396,24 @@ function QRScannerModal({ open, onClose, onScan }: { open: boolean; onClose: () 
           }
         }, 30000);
 
+        // Try to access camera zoom capabilities
+        setTimeout(() => {
+          if (cancelled) return;
+          const videoEl = document.querySelector('#seycure-qr-reader video') as HTMLVideoElement;
+          if (videoEl && videoEl.srcObject) {
+            const stream = videoEl.srcObject as MediaStream;
+            const track = stream.getVideoTracks()[0];
+            if (track) {
+              const capabilities = track.getCapabilities ? track.getCapabilities() : {} as any;
+              if (capabilities && capabilities.zoom) {
+                setMinZoom(capabilities.zoom.min || 1);
+                setMaxZoom(capabilities.zoom.max || 1);
+                setZoom(capabilities.zoom.min || 1);
+              }
+            }
+          }
+        }, 800);
+
       } catch (err: unknown) {
         if (cancelled) return;
         const errorMessage = err instanceof Error ? err.message : String(err);
@@ -456,6 +500,23 @@ function QRScannerModal({ open, onClose, onScan }: { open: boolean; onClose: () 
               </div>
             )}
           </div>
+
+          {/* Zoom Control */}
+          {maxZoom > 1 && phase === 'scanning' && (
+            <div className="mt-5 px-6 flex items-center gap-3 animate-fadeUp">
+              <ZoomOut className="w-5 h-5 text-primary-blue/70" />
+              <input 
+                type="range" 
+                min={minZoom} 
+                max={maxZoom} 
+                step={0.1} 
+                value={zoom}
+                onChange={handleZoomChange}
+                className="flex-1 h-1.5 bg-primary-blue/20 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-primary-blue [&::-webkit-slider-thumb]:rounded-full shadow-inner"
+              />
+              <ZoomIn className="w-5 h-5 text-primary-blue" />
+            </div>
+          )}
 
           {/* Status text */}
           <div className="text-center mt-6">
@@ -2293,8 +2354,8 @@ function SplashScreen({ onComplete }: { onComplete: () => void }) {
   return (
     <div className="fixed inset-0 z-[9999] bg-white flex flex-col items-center justify-center animate-splash-fade pointer-events-none">
       <div className="animate-text-scale">
-        <div className="flex flex-col items-center gap-3">
-          <Shield className="w-16 h-16 text-primary-blue" strokeWidth={1.5} />
+        <div className="flex flex-col items-center gap-4">
+          <img src="/logo.png" alt="Seycure Logo" className="w-24 h-24 object-contain shadow-2xl rounded-2xl" />
           <div className="text-center animate-text-reveal">
             <h1 className="font-sans text-4xl font-bold tracking-tight text-primary-dark">Seycure</h1>
             <p className="font-sans text-sm text-text-secondary mt-1 tracking-widest uppercase">by ArkQube</p>
@@ -2309,6 +2370,41 @@ function App() {
   const [mode, setMode] = useState<AppMode>('link-shield');
   const [status] = useState<'idle' | 'scanning'>('idle');
   const [showSplash, setShowSplash] = useState(true);
+  
+  // Swipe navigation state
+  const touchStartX = useRef<number | null>(null);
+  const touchStartY = useRef<number | null>(null);
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    touchStartX.current = e.touches[0].clientX;
+    touchStartY.current = e.touches[0].clientY;
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (touchStartX.current === null || touchStartY.current === null) return;
+    
+    const touchEndX = e.changedTouches[0].clientX;
+    const touchEndY = e.changedTouches[0].clientY;
+    
+    const deltaX = touchStartX.current - touchEndX;
+    const deltaY = touchStartY.current - touchEndY;
+    
+    // Check if swipe is mostly horizontal and > 50px
+    if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > 50) {
+      if (deltaX > 0) {
+        // Swiped left (go forward)
+        if (mode === 'link-shield') setMode('media-scrubber');
+        else if (mode === 'media-scrubber') setMode('privacy-blur');
+      } else {
+        // Swiped right (go back)
+        if (mode === 'privacy-blur') setMode('media-scrubber');
+        else if (mode === 'media-scrubber') setMode('link-shield');
+      }
+    }
+    
+    touchStartX.current = null;
+    touchStartY.current = null;
+  };
 
   const renderContent = () => {
     switch (mode) {
@@ -2317,22 +2413,27 @@ function App() {
       case 'media-scrubber':
       case 'privacy-blur':
         return <MediaScrubberTab mode={mode} onModeChange={setMode} />;
-
       default:
         return <LinkShield />;
     }
   };
 
   return (
-    <div className="min-h-screen bg-bg-light">
+    <div 
+      className="min-h-screen bg-bg-light"
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+    >
       {showSplash && <SplashScreen onComplete={() => setShowSplash(false)} />}
 
       <div className="max-w-app mx-auto">
         <TopBar status={status} />
         <TabBar mode={mode} onChange={setMode} />
 
-        <main className="pb-8">
-          {renderContent()}
+        <main className="pb-8 overflow-hidden">
+          <div className="animate-fadeUp transition-transform duration-300">
+            {renderContent()}
+          </div>
         </main>
       </div>
     </div>
