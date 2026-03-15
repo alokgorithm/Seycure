@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { X, Undo2, RotateCcw, Plus, Minus, Download, Share2 } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { ChevronLeft, Undo2, RotateCcw, Plus, Minus, Download, Share2 } from 'lucide-react';
+import { App as CapacitorApp } from '@capacitor/app';
 import { useBlurEditor, renderToCanvas } from '@/hooks/useBlurEditor';
 import { useNativeShare } from '@/hooks/useNativeShare';
 import { Filesystem, Directory } from '@capacitor/filesystem';
@@ -65,6 +67,28 @@ export function BlurEditorModal({ open, onClose, imageBase64, findings, appConte
             setSaved(false);
         };
     }, [open, imageBase64, findings, initFromFindings]);
+
+    // ── Android hardware back button ───────────────────────────────────────
+    useEffect(() => {
+        if (!open) return;
+        let listenerHandle: { remove: () => void } | null = null;
+        CapacitorApp.addListener('backButton', () => {
+            onClose();
+        }).then(handle => {
+            listenerHandle = handle;
+        });
+        return () => {
+            listenerHandle?.remove();
+        };
+    }, [open, onClose]);
+
+    // ── Lock body scroll when open ─────────────────────────────────────────
+    useEffect(() => {
+        if (!open) return;
+        const prev = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+        return () => { document.body.style.overflow = prev; };
+    }, [open]);
 
     // ── Re-render canvas when regions change ───────────────────────────────
     useEffect(() => {
@@ -252,18 +276,39 @@ export function BlurEditorModal({ open, onClose, imageBase64, findings, appConte
         height: Math.abs(dragCurrent.y - dragStart.y),
     } : null;
 
-    return (
-        <div className="fixed inset-0 z-[100] bg-black/95 flex flex-col animate-modalIn">
+    // ── Render via Portal into document.body ───────────────────────────────
+    // This ensures the editor covers the ENTIRE screen, bypassing any
+    // parent overflow/transform CSS that breaks fixed positioning.
+    return createPortal(
+        <div
+            style={{
+                position: 'fixed',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                width: '100vw',
+                height: '100vh',
+                zIndex: 99999,
+                display: 'flex',
+                flexDirection: 'column',
+                background: '#000',
+            }}
+            role="dialog"
+            aria-modal="true"
+        >
             {/* ── Top Toolbar ─────────────────────────────────────────────────── */}
-            <div className="flex items-center justify-between px-4 py-3 bg-black/80 border-b border-white/10">
-                <div className="flex items-center gap-3">
+            <div className="flex-shrink-0 flex items-center justify-between px-4 py-3 bg-black/80 border-b border-white/10">
+                <div className="flex items-center gap-2">
                     <button
                         onClick={onClose}
-                        className="p-2 rounded-lg hover:bg-white/10 transition-colors"
+                        className="flex items-center gap-1 pl-1 pr-3 py-2 rounded-lg hover:bg-white/10 active:bg-white/20 transition-colors"
+                        aria-label="Go back"
                     >
-                        <X className="w-5 h-5 text-white" />
+                        <ChevronLeft className="w-5 h-5 text-white" />
+                        <span className="font-sans text-sm font-medium text-white">Back</span>
                     </button>
-                    <h2 className="font-sans text-sm font-semibold text-white">Blur Editor</h2>
+                    <h2 className="font-sans text-sm font-semibold text-white/70">Blur Editor</h2>
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -304,15 +349,15 @@ export function BlurEditorModal({ open, onClose, imageBase64, findings, appConte
             {/* ── Canvas Area ─────────────────────────────────────────────────── */}
             <div
                 ref={containerRef}
-                className="flex-1 overflow-auto flex items-center justify-center p-4 relative"
+                className="flex-1 min-h-0 overflow-auto flex items-start justify-center p-2 relative"
                 style={{ touchAction: 'none' }}
             >
                 {imageLoaded ? (
-                    <div className="relative inline-block max-w-full max-h-full">
+                    <div className="relative inline-block w-full">
                         <canvas
                             ref={canvasRef}
-                            className="max-w-full max-h-[calc(100vh-180px)] object-contain rounded-lg"
-                            style={{ cursor: mode === 'add' ? 'crosshair' : 'pointer' }}
+                            className="w-full h-auto object-contain rounded-lg"
+                            style={{ cursor: mode === 'add' ? 'crosshair' : 'pointer', display: 'block' }}
                             onPointerDown={onPointerDown}
                             onPointerMove={onPointerMove}
                             onPointerLeave={onPointerUp}
@@ -359,13 +404,13 @@ export function BlurEditorModal({ open, onClose, imageBase64, findings, appConte
             </div>
 
             {/* ── Bottom Toolbar ───────────────────────────────────────────────── */}
-            <div className="flex items-center justify-between px-4 py-3 bg-black/80 border-t border-white/10">
-                {/* Mode toggle */}
-                <div className="flex items-center gap-1 bg-white/5 rounded-lg p-1">
+            <div className="flex-shrink-0 bg-black/80 border-t border-white/10 px-3 py-2 flex flex-col gap-2">
+                {/* Row 1: Mode toggle */}
+                <div className="flex items-center gap-1 bg-white/5 rounded-lg p-1 self-start">
                     <button
                         onClick={() => setMode('add')}
-                        className={`flex items-center gap-1.5 px-3 py-2 rounded-md font-sans text-xs font-medium transition-all ${mode === 'add'
-                            ? 'bg-primary-blue text-white shadow-glow'
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-sans text-xs font-medium transition-all ${mode === 'add'
+                            ? 'bg-primary-blue text-white'
                             : 'text-white/60 hover:text-white'
                             }`}
                     >
@@ -374,7 +419,7 @@ export function BlurEditorModal({ open, onClose, imageBase64, findings, appConte
                     </button>
                     <button
                         onClick={() => setMode('remove')}
-                        className={`flex items-center gap-1.5 px-3 py-2 rounded-md font-sans text-xs font-medium transition-all ${mode === 'remove'
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-sans text-xs font-medium transition-all ${mode === 'remove'
                             ? 'bg-red-500 text-white'
                             : 'text-white/60 hover:text-white'
                             }`}
@@ -384,12 +429,12 @@ export function BlurEditorModal({ open, onClose, imageBase64, findings, appConte
                     </button>
                 </div>
 
-                {/* Save / Share */}
+                {/* Row 2: Save / Share */}
                 <div className="flex items-center gap-2">
                     <button
                         onClick={handleSave}
                         disabled={saving}
-                        className={`flex items-center gap-1.5 px-4 py-2 rounded-lg font-sans text-xs font-medium transition-all ${saved
+                        className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg font-sans text-xs font-medium transition-all ${saved
                             ? 'bg-green-500 text-white'
                             : 'bg-white/10 text-white hover:bg-white/20'
                             }`}
@@ -399,7 +444,7 @@ export function BlurEditorModal({ open, onClose, imageBase64, findings, appConte
                     </button>
                     <button
                         onClick={handleShare}
-                        className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary-blue text-white font-sans text-xs font-medium hover:bg-primary-blue/90 transition-colors"
+                        className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg bg-primary-blue text-white font-sans text-xs font-medium hover:bg-primary-blue/90 transition-colors"
                     >
                         <Share2 className="w-3.5 h-3.5" />
                         Share
@@ -413,6 +458,7 @@ export function BlurEditorModal({ open, onClose, imageBase64, findings, appConte
                     ✓ Saved to Documents
                 </div>
             )}
-        </div>
+        </div>,
+        document.body
     );
 }
