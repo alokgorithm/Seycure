@@ -2755,7 +2755,7 @@ function SettingsScreen({ open, onClose }: { open: boolean; onClose: () => void 
   const hasAnyStats = (stats.screenshotsProtected || 0) > 0 || (stats.photosScrubbed || 0) > 0 || (stats.linksCleaned || 0) > 0 || (stats.trackersRemoved || 0) > 0;
 
   const handleShare = async () => {
-    const text = `My Seycure Privacy Score:\n\n🛡️ Screenshots Protected: ${stats.screenshotsProtected || 0}\n📸 Photos Scrubbed: ${stats.photosScrubbed || 0}\n🔗 Links Cleaned: ${stats.linksCleaned || 0}\n🚫 Trackers Blocked: ${stats.trackersRemoved || 0}\n\nProtect your data too! Get Seycure: https://play.google.com/store/apps/details?id=com.arkqube.clrlink`;
+    const text = `My Seycure Privacy Score:\n\n🛡️ Screenshots Protected: ${stats.screenshotsProtected || 0}\n📸 Photos Scrubbed: ${stats.photosScrubbed || 0}\n🔗 Links Cleaned: ${stats.linksCleaned || 0}\n🚫 Trackers Blocked: ${stats.trackersRemoved || 0}\n\nProtect your data too! Get Seycure: https://play.google.com/store/apps/details?id=com.arkqube.seycure`;
     await shareText(text, 'Share Privacy Score');
   };
 

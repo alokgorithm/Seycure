@@ -1,4 +1,4 @@
-package com.arkqube.clrlink;
+package com.arkqube.seycure;
 
 import android.os.Bundle;
 import com.getcapacitor.BridgeActivity;

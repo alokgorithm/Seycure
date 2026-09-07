@@ -2,6 +2,6 @@
 <resources>
     <string name="app_name">Seycure</string>
     <string name="title_activity_main">Seycure</string>
-    <string name="package_name">com.arkqube.clrlink</string>
-    <string name="custom_url_scheme">com.arkqube.clrlink</string>
+    <string name="package_name">com.arkqube.seycure</string>
+    <string name="custom_url_scheme">com.arkqube.seycure</string>
 </resources>

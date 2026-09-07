@@ -1,7 +1,7 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.arkqube.clrlink',
+  appId: 'com.arkqube.seycure',
   appName: 'Seycure',
   webDir: 'dist',
   server: {

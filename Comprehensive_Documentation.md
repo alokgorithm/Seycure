@@ -96,7 +96,7 @@ a:\DEV\clrlink\
     ├── package.json               (React & Capacitor dependencies)
     ├── vite.config.ts             (Vite bundler configuration)
     ├── tailwind.config.js         (Shadcn UI & Tailwind color schemas)
-    ├── capacitor.config.ts        (Capacitor init, sets app id `com.arkqube.clrlink`)
+    ├── capacitor.config.ts        (Capacitor init, sets app id `com.arkqube.seycure`)
     ├── index.html                 (Root entrypoint, disables pinch-to-zoom)
     │
     ├── android/                   (Native Android Studio Project)
