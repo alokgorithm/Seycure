@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Shield, X, Camera, Link2, Image as ImageIcon, ExternalLink, AlertTriangle, Scissors, Check, ChevronRight, Upload, MapPin, Smartphone, Wrench, Download, Share2, Loader2, ArrowRight, Search, Eye, EyeOff, ShieldAlert, ShieldCheck, RefreshCw, FileText, User, Building2, Type, Calendar, ZoomIn, ZoomOut } from 'lucide-react';
+import { X, Camera, Link2, Image as ImageIcon, ExternalLink, AlertTriangle, Scissors, Check, ChevronRight, Upload, MapPin, Smartphone, Wrench, Download, Share2, Loader2, ArrowRight, Search, Eye, EyeOff, ShieldAlert, ShieldCheck, RefreshCw, FileText, User, Building2, Type, Calendar, ZoomIn, ZoomOut, Trophy } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
 import exifr from 'exifr';
 import { PDFDocument } from 'pdf-lib';
@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { useNativeShare } from '@/hooks/useNativeShare';
+import { useAppStats } from '@/hooks/useAppStats';
 
 import { analyzeScreenshot, type ScreenshotFinding } from '@/hooks/useMLKitOCR';
 import { BlurEditorModal } from '@/components/BlurEditorModal';
@@ -17,7 +18,7 @@ import { classifyLink, type CategoryResult } from '@/hooks/useLinkClassifier';
 import { checkPhishingSignals, type PhishingSignal } from '@/hooks/usePhishingDetector';
 
 // Types
-type AppMode = 'link-shield' | 'media-scrubber' | 'privacy-blur';
+type AppMode = 'link-shield' | 'media-scrubber' | 'privacy-blur' | 'dashboard';
 
 interface TrackerParam {
   name: string;
@@ -253,6 +254,17 @@ function TabBar({ mode, onChange }: { mode: AppMode; onChange: (m: AppMode) => v
           <span className="hidden sm:inline">Media + Blur</span>
           <span className="sm:hidden">Media</span>
         </button>
+        <button
+          onClick={() => onChange('dashboard')}
+          className={`px-4 py-2.5 rounded-lg font-sans text-xs sm:text-sm font-medium transition-all duration-150 flex items-center gap-1.5 ${mode === 'dashboard'
+            ? 'bg-primary-blue text-white shadow-glow'
+            : 'text-text-secondary hover:text-text-primary'
+            }`}
+        >
+          <ShieldCheck className="w-4 h-4" />
+          <span className="hidden sm:inline">Stats</span>
+          <span className="sm:hidden">Stats</span>
+        </button>
 
       </div>
     </div>
@@ -261,34 +273,21 @@ function TabBar({ mode, onChange }: { mode: AppMode; onChange: (m: AppMode) => v
 
 function QRScannerModal({ open, onClose, onScan }: { open: boolean; onClose: () => void; onScan: (url: string) => void }) {
   const [phase, setPhase] = useState<'scanning' | 'detected' | 'timeout' | 'permission-denied' | 'error'>('scanning');
-  const [zoom, setZoom] = useState(1);
-  const [minZoom, setMinZoom] = useState(1);
-  const [maxZoom, setMaxZoom] = useState(1);
+  const [cssZoom, setCssZoom] = useState(1);
   const scannerRef = useRef<Html5Qrcode | null>(null);
+  const detectedRef = useRef(false);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
 
-  const handleZoomChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  // CSS zoom: always works — applies transform:scale to the live video element
+  const handleZoomChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newZoom = Number(e.target.value);
-    setZoom(newZoom);
-    try {
-      const videoEl = document.querySelector('#seycure-qr-reader video') as HTMLVideoElement;
-      if (videoEl && videoEl.srcObject) {
-        const stream = videoEl.srcObject as MediaStream;
-        const track = stream.getVideoTracks()[0];
-        if (track) {
-          await track.applyConstraints({ advanced: [{ zoom: newZoom }] } as any);
-        }
-      }
-    } catch (err) {
-      console.warn('Zoom not supported by device hardware', err);
-      // Fallback: try html5-qrcode built-in if available
-      if (scannerRef.current && (scannerRef.current as any).applyVideoConstraints) {
-        try {
-          await (scannerRef.current as any).applyVideoConstraints({ advanced: [{ zoom: newZoom }] });
-        } catch (e) {}
-      }
+    setCssZoom(newZoom);
+    const videoEl = document.querySelector('#seycure-qr-reader video') as HTMLVideoElement;
+    if (videoEl) {
+      videoEl.style.transform = `scale(${newZoom})`;
+      videoEl.style.transformOrigin = 'center center';
     }
   };
 
@@ -296,25 +295,85 @@ function QRScannerModal({ open, onClose, onScan }: { open: boolean; onClose: () 
     const file = e.target.files?.[0];
     if (!file) return;
 
+    // Helper: try scanning a canvas crop
+    const tryScanCanvas = (canvas: HTMLCanvasElement): Promise<string> => {
+      return new Promise((resolve, reject) => {
+        canvas.toBlob(async (blob) => {
+          if (!blob) { reject(new Error('no blob')); return; }
+          const f = new File([blob], 'crop.png', { type: 'image/png' });
+          try {
+            const s = new Html5Qrcode('seycure-qr-gallery-temp');
+            const result = await s.scanFile(f, true);
+            s.clear();
+            resolve(result);
+          } catch (err) {
+            reject(err);
+          }
+        }, 'image/png');
+      });
+    };
+
     try {
-      // Stop camera scanner first
       await stopScanner();
       setPhase('scanning');
+      detectedRef.current = false;
 
-      const tempScanner = new Html5Qrcode('seycure-qr-gallery-temp');
-      const result = await tempScanner.scanFile(file, true);
-      tempScanner.clear();
+      // 1. Try scanning the full image
+      try {
+        const tempScanner = new Html5Qrcode('seycure-qr-gallery-temp');
+        const result = await tempScanner.scanFile(file, true);
+        tempScanner.clear();
+        setPhase('detected');
+        detectedRef.current = true;
+        setTimeout(() => { onScan(result); onClose(); }, 150);
+        if (galleryInputRef.current) galleryInputRef.current.value = '';
+        return;
+      } catch {
+        // Full scan failed, try tiled crops
+      }
 
-      setPhase('detected');
-      setTimeout(() => {
-        onScan(result);
-        onClose();
-      }, 150);
+      // 2. Tile scan: divide image into 4 quadrants and try each
+      const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = reject;
+        image.src = URL.createObjectURL(file);
+      });
+
+      const W = img.naturalWidth;
+      const H = img.naturalHeight;
+      const crops = [
+        { x: 0,       y: 0,       w: W / 2, h: H / 2 },  // top-left
+        { x: W / 2,   y: 0,       w: W / 2, h: H / 2 },  // top-right
+        { x: 0,       y: H / 2,   w: W / 2, h: H / 2 },  // bottom-left
+        { x: W / 2,   y: H / 2,   w: W / 2, h: H / 2 },  // bottom-right
+        { x: W * 0.25, y: H * 0.25, w: W * 0.5, h: H * 0.5 }, // center
+      ];
+
+      for (const { x, y, w, h } of crops) {
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext('2d')!;
+          ctx.drawImage(img, x, y, w, h, 0, 0, w, h);
+          const result = await tryScanCanvas(canvas);
+          setPhase('detected');
+          detectedRef.current = true;
+          setTimeout(() => { onScan(result); onClose(); }, 150);
+          if (galleryInputRef.current) galleryInputRef.current.value = '';
+          return;
+        } catch {
+          // This crop had no QR, try next
+        }
+      }
+
+      // All crops failed
+      setPhase('timeout');
     } catch {
-      setPhase('timeout'); // No QR found in image
+      setPhase('timeout');
     }
 
-    // Reset input so same file can be picked again
     if (galleryInputRef.current) galleryInputRef.current.value = '';
   };
 
@@ -345,6 +404,7 @@ function QRScannerModal({ open, onClose, onScan }: { open: boolean; onClose: () 
     if (!open) return;
 
     setPhase('scanning');
+    detectedRef.current = false;
     let cancelled = false;
 
     const startScanner = async () => {
@@ -367,21 +427,40 @@ function QRScannerModal({ open, onClose, onScan }: { open: boolean; onClose: () 
             qrbox: { width: 300, height: 300 },
             aspectRatio: 1,
           },
-          (decodedText) => {
-            if (cancelled) return;
+          (decodedText, decodedResult) => {
+            if (cancelled || detectedRef.current) return;
+            detectedRef.current = true;
             setPhase('detected');
             if (timeoutRef.current) clearTimeout(timeoutRef.current);
 
-            // Brief delay to show the detection animation
+            // Auto Zoom animation to the code
+            const videoEl = document.querySelector('#seycure-qr-reader video') as HTMLVideoElement;
+            if (videoEl && decodedResult?.result?.resultPoints?.length > 0) {
+              const points = decodedResult.result.resultPoints;
+              let cx = 0, cy = 0;
+              points.forEach((p: any) => { cx += p.x; cy += p.y; });
+              cx /= points.length;
+              cy /= points.length;
+              
+              const vw = videoEl.videoWidth || 320;
+              const vh = videoEl.videoHeight || 320;
+              const px = (cx / vw) * 100;
+              const py = (cy / vh) * 100;
+              
+              videoEl.style.transformOrigin = `${px}% ${py}%`;
+              videoEl.style.transition = 'all 0.6s cubic-bezier(0.4, 0, 0.2, 1)';
+              videoEl.style.transform = `scale(${Math.max(cssZoom * 1.5, 2.8)})`;
+            }
+
+            // Delay to show the detection zoom animation
             setTimeout(() => {
               if (!cancelled) {
                 onScan(decodedText);
                 onClose();
               }
-            }, 150);
-
-            // Stop scanning after first detection
-            scanner.stop().catch(() => { });
+              // Stop scanning after closing to not interrupt the zoom animation
+              scanner.stop().catch(() => { });
+            }, 600);
           },
           () => {
             // QR code not found in frame — this fires every frame, ignore
@@ -396,23 +475,16 @@ function QRScannerModal({ open, onClose, onScan }: { open: boolean; onClose: () 
           }
         }, 30000);
 
-        // Try to access camera zoom capabilities
+        // Remove old zoom polling — we use CSS zoom instead
+        // Just apply CSS zoom to video after it starts
         setTimeout(() => {
           if (cancelled) return;
           const videoEl = document.querySelector('#seycure-qr-reader video') as HTMLVideoElement;
-          if (videoEl && videoEl.srcObject) {
-            const stream = videoEl.srcObject as MediaStream;
-            const track = stream.getVideoTracks()[0];
-            if (track) {
-              const capabilities = track.getCapabilities ? track.getCapabilities() : {} as any;
-              if (capabilities && capabilities.zoom) {
-                setMinZoom(capabilities.zoom.min || 1);
-                setMaxZoom(capabilities.zoom.max || 1);
-                setZoom(capabilities.zoom.min || 1);
-              }
-            }
+          if (videoEl) {
+            videoEl.style.transform = `scale(${cssZoom})`;
+            videoEl.style.transformOrigin = 'center center';
           }
-        }, 800);
+        }, 600);
 
       } catch (err: unknown) {
         if (cancelled) return;
@@ -449,14 +521,31 @@ function QRScannerModal({ open, onClose, onScan }: { open: boolean; onClose: () 
       await scanner.start(
         { facingMode: 'environment' },
         { fps: 10, qrbox: { width: 230, height: 230 }, aspectRatio: 1 },
-        (decodedText) => {
+        (decodedText, decodedResult) => {
+          if (detectedRef.current) return;
+          detectedRef.current = true;
           setPhase('detected');
           if (timeoutRef.current) clearTimeout(timeoutRef.current);
+
+          const videoEl = document.querySelector('#seycure-qr-reader video') as HTMLVideoElement;
+          if (videoEl && decodedResult?.result?.resultPoints?.length > 0) {
+            const points = decodedResult.result.resultPoints;
+            let cx = 0, cy = 0;
+            points.forEach((p: any) => { cx += p.x; cy += p.y; });
+            cx /= points.length;
+            cy /= points.length;
+            const vw = videoEl.videoWidth || 320;
+            const vh = videoEl.videoHeight || 320;
+            videoEl.style.transformOrigin = `${(cx / vw) * 100}% ${(cy / vh) * 100}%`;
+            videoEl.style.transition = 'all 0.6s cubic-bezier(0.4, 0, 0.2, 1)';
+            videoEl.style.transform = `scale(${Math.max(cssZoom * 1.5, 2.8)})`;
+          }
+
           setTimeout(() => {
             onScan(decodedText);
             onClose();
-          }, 800);
-          scanner.stop().catch(() => { });
+            scanner.stop().catch(() => { });
+          }, 600);
         },
         () => { }
       );
@@ -477,20 +566,29 @@ function QRScannerModal({ open, onClose, onScan }: { open: boolean; onClose: () 
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-w-md bg-primary-dark/95 border-primary-blue/30 backdrop-blur-xl p-0 overflow-hidden">
+      <DialogContent className="max-w-md bg-white/95 dark:bg-primary-dark/95 border-border-light dark:border-primary-blue/30 backdrop-blur-xl p-0 overflow-hidden">
         <div className="relative p-8">
           {/* Corner brackets */}
-          <div className="absolute top-4 left-4 w-8 h-8 border-t-2 border-l-2 border-primary-blue" />
-          <div className="absolute top-4 right-4 w-8 h-8 border-t-2 border-r-2 border-primary-blue" />
-          <div className="absolute bottom-4 left-4 w-8 h-8 border-b-2 border-l-2 border-primary-blue" />
-          <div className="absolute bottom-4 right-4 w-8 h-8 border-b-2 border-r-2 border-primary-blue" />
+          <div className="absolute top-4 left-4 w-8 h-8 border-t-2 border-l-2 border-primary-blue transition-colors duration-300" />
+          <div className="absolute top-4 right-4 w-8 h-8 border-t-2 border-r-2 border-primary-blue transition-colors duration-300" />
+          <div className="absolute bottom-4 left-4 w-8 h-8 border-b-2 border-l-2 border-primary-blue transition-colors duration-300" />
+          <div className="absolute bottom-4 right-4 w-8 h-8 border-b-2 border-r-2 border-primary-blue transition-colors duration-300" />
 
           {/* Viewfinder — html5-qrcode renders camera feed here */}
-          <div ref={containerRef} className="relative w-[320px] h-[320px] mx-auto bg-black/50 overflow-hidden rounded-lg">
-            <div id="seycure-qr-reader" className="w-full h-full" />
+          <div ref={containerRef} className="relative w-[320px] h-[320px] mx-auto bg-black/50 overflow-hidden rounded-lg shadow-inner">
+            <div id="seycure-qr-reader" className="w-full h-full [&>video]:object-cover" />
 
             {phase === 'scanning' && (
-              <div className="absolute inset-x-0 h-1 bg-primary-blue shadow-glow-strong animate-scanline pointer-events-none z-10" />
+              <>
+                <div className="absolute inset-x-0 h-1 bg-primary-blue shadow-glow-strong animate-scanline pointer-events-none z-10" />
+                {/* Central scanning reticle */}
+                <div className="absolute inset-0 m-auto w-[230px] h-[230px] border-2 border-primary-blue/40 rounded-[20px] pointer-events-none z-10">
+                  <div className="absolute top-0 left-0 w-4 h-4 border-t-2 border-l-2 border-primary-blue rounded-tl-[16px]" />
+                  <div className="absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 border-primary-blue rounded-tr-[16px]" />
+                  <div className="absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 border-primary-blue rounded-bl-[16px]" />
+                  <div className="absolute bottom-0 right-0 w-4 h-4 border-b-2 border-r-2 border-primary-blue rounded-br-[16px]" />
+                </div>
+              </>
             )}
             {phase === 'detected' && (
               <div className="absolute inset-0 flex items-center justify-center bg-black/40 z-10">
@@ -501,20 +599,20 @@ function QRScannerModal({ open, onClose, onScan }: { open: boolean; onClose: () 
             )}
           </div>
 
-          {/* Zoom Control */}
-          {maxZoom > 1 && phase === 'scanning' && (
-            <div className="mt-5 px-6 flex items-center gap-3 animate-fadeUp">
-              <ZoomOut className="w-5 h-5 text-primary-blue/70" />
+          {/* Zoom Control — always visible during scanning */}
+          {phase === 'scanning' && (
+            <div className="mt-4 px-6 flex items-center gap-3">
+              <ZoomOut className="w-5 h-5 text-primary-blue/70 flex-shrink-0" />
               <input 
                 type="range" 
-                min={minZoom} 
-                max={maxZoom} 
+                min={1} 
+                max={3} 
                 step={0.1} 
-                value={zoom}
+                value={cssZoom}
                 onChange={handleZoomChange}
-                className="flex-1 h-1.5 bg-primary-blue/20 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-primary-blue [&::-webkit-slider-thumb]:rounded-full shadow-inner"
+                className="flex-1 h-1.5 bg-primary-blue/20 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:h-5 [&::-webkit-slider-thumb]:bg-primary-blue [&::-webkit-slider-thumb]:rounded-full"
               />
-              <ZoomIn className="w-5 h-5 text-primary-blue" />
+              <ZoomIn className="w-5 h-5 text-primary-blue flex-shrink-0" />
             </div>
           )}
 
@@ -570,14 +668,14 @@ function QRScannerModal({ open, onClose, onScan }: { open: boolean; onClose: () 
           <div className="flex items-center justify-center gap-6 mt-4">
             <button
               onClick={() => galleryInputRef.current?.click()}
-              className="flex items-center gap-2 font-sans text-xs text-primary-blue hover:text-primary-blue/80 transition-colors px-3 py-2 border border-primary-blue/30 rounded-lg"
+              className="flex items-center gap-2 font-sans text-xs text-primary-blue hover:text-primary-blue/80 transition-colors px-3 py-2 border border-primary-blue/30 rounded-lg dark:hover:bg-white/5 hover:bg-black/5"
             >
               <ImageIcon className="w-4 h-4" />
               From Gallery
             </button>
             <button
               onClick={handleClose}
-              className="font-sans text-xs text-text-muted hover:text-white transition-colors px-3 py-2"
+              className="font-sans text-xs text-text-muted hover:text-text-primary dark:hover:text-white transition-colors px-3 py-2"
             >
               Cancel
             </button>
@@ -591,13 +689,11 @@ function QRScannerModal({ open, onClose, onScan }: { open: boolean; onClose: () 
 function BrowserModal({ url, open, onClose }: { url: string; open: boolean; onClose: () => void }) {
   const [progress, setProgress] = useState(0);
   const [loaded, setLoaded] = useState(false);
-  const [blocked, setBlocked] = useState(false);
 
   useEffect(() => {
     if (open) {
       setProgress(0);
       setLoaded(false);
-      setBlocked(false);
 
       const steps = [20, 45, 70, 88];
       steps.forEach((p, i) => {
@@ -607,20 +703,17 @@ function BrowserModal({ url, open, onClose }: { url: string; open: boolean; onCl
       const loadTimer = setTimeout(() => {
         setProgress(100);
         setLoaded(true);
-      }, 2000);
-
-      const blockTimer = setTimeout(() => {
-        if (!loaded) setBlocked(true);
-      }, 6000);
+      }, 3500); // Increased time since proxy takes a bit longer
 
       return () => {
         clearTimeout(loadTimer);
-        clearTimeout(blockTimer);
       };
     }
   }, [open]);
 
   const domain = getDomainFromUrl(url);
+  // Use a proxy to bypass X-Frame-Options and CORS restrictions that cause ERR_BLOCKED_BY_RESPONSE
+  const proxiedUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
@@ -666,24 +759,8 @@ function BrowserModal({ url, open, onClose }: { url: string; open: boolean; onCl
 
         {/* Content viewport */}
         <div className="flex-1 relative overflow-hidden bg-white">
-          {blocked ? (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-bg-light">
-              <Shield className="w-16 h-16 text-danger-red mb-4" />
-              <p className="font-sans text-lg font-semibold text-danger-red mb-2">Embed Blocked by Site</p>
-              <p className="font-sans text-sm text-text-secondary text-center max-w-md mb-6">
-                {domain} has restricted embedding via X-Frame-Options or Content Security Policy.
-              </p>
-              <a
-                href={url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="px-4 py-2 bg-primary-blue text-white font-sans text-sm font-medium rounded-lg hover:bg-primary-blue/90 transition-colors"
-              >
-                Open in Browser
-              </a>
-            </div>
-          ) : !loaded ? (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-white">
+          {!loaded ? (
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-white z-10">
               <div className="relative w-12 h-12 mb-4">
                 <div className="absolute inset-0 border-2 border-primary-blue/30 rounded-full" />
                 <div className="absolute inset-0 border-2 border-t-primary-blue rounded-full animate-spin-slow" />
@@ -691,16 +768,18 @@ function BrowserModal({ url, open, onClose }: { url: string; open: boolean; onCl
                 <div className="absolute inset-2 border-2 border-b-primary-blue rounded-full animate-spin-reverse" />
               </div>
               <p className="font-sans text-sm text-text-secondary">{domain}</p>
+              <p className="font-sans text-xs text-text-muted mt-2">Bypassing restrictions via Proxy...</p>
             </div>
-          ) : (
-            <>
-              <iframe
-                src={url}
-                className="w-full h-full"
-                sandbox="allow-same-origin allow-scripts"
-              />
-            </>
-          )}
+          ) : null}
+          <iframe
+            src={proxiedUrl}
+            className="w-full h-full border-0"
+            sandbox="allow-same-origin allow-scripts"
+            onLoad={() => {
+              setProgress(100);
+              setLoaded(true);
+            }}
+          />
 
           {/* Corner brackets */}
           <div className="absolute top-4 left-4 w-6 h-6 border-t border-l border-primary-blue/30 pointer-events-none" />
@@ -1407,11 +1486,14 @@ function LinkShield() {
   const [showScanner, setShowScanner] = useState(false);
   const [analysis, setAnalysis] = useState<LinkAnalysis | null>(null);
   const [isScanning, setIsScanning] = useState(false);
+  const { incrementLinksCleaned, incrementTrackersRemoved } = useAppStats();
 
   const analyzeUrl = useCallback((value: string) => {
     if (isValidUrl(value)) {
       setIsScanning(true);
       const { cleaned, removed } = cleanUrl(value);
+      incrementLinksCleaned();
+      incrementTrackersRemoved(removed);
       const domain = getDomainFromUrl(value);
       const { level, ext } = getFileRisk(value);
       const isShort = isShortener(value);
@@ -1429,7 +1511,7 @@ function LinkShield() {
         title: domain,
         description: '',
         favicon: `https://www.google.com/s2/favicons?domain=${domain}&sz=64`,
-        phishingSignals: checkPhishingSignals(value, domain, domain, domain, false),
+        phishingSignals: checkPhishingSignals(value, domain, domain, domain, false, isShort),
       };
       setAnalysis(instantAnalysis);
 
@@ -1448,7 +1530,7 @@ function LinkShield() {
           const hasEmailField = /<input[^>]+(type=["']?email["']?|name=["'][^"']*(email|user)[^"']*["'])/i.test(html);
           const hasLoginForm = hasPasswordField && hasEmailField;
 
-          const pSignals = checkPhishingSignals(value, domain, domain, title, hasLoginForm);
+          const pSignals = checkPhishingSignals(value, domain, domain, title, hasLoginForm, isShort);
 
           setAnalysis(prev => prev ? {
             ...prev,
@@ -1458,12 +1540,26 @@ function LinkShield() {
             phishingSignals: pSignals.length > 0 ? pSignals : prev.phishingSignals,
           } : prev);
 
-          // Resolve shortened URL destination
-          if (isShort && data.status?.url) {
-            const resolvedUrl = data.status.url;
-            if (resolvedUrl !== value) {
-              setAnalysis(prev => prev ? { ...prev, resolvedUrl } : prev);
-            }
+          // Resolve shortened URL destination using CF Worker redirect tracer
+          if (isShort) {
+            fetch(`${SAFE_BROWSING_WORKER_URL}/redirects?url=${encodeURIComponent(value)}`, {
+              signal: AbortSignal.timeout(8000),
+            })
+              .then(r => r.json())
+              .then((chainData: any) => {
+                // chainData is an array of { url, status } hops
+                const hops = Array.isArray(chainData) ? chainData : [];
+                const finalHop = hops[hops.length - 1];
+                if (finalHop?.url && finalHop.url !== value) {
+                  setAnalysis(prev => prev ? { ...prev, resolvedUrl: finalHop.url } : prev);
+                }
+              })
+              .catch(() => {
+                // Fallback: allorigins sometimes returns the final URL in status.url
+                if (data.status?.url && data.status.url !== value) {
+                  setAnalysis(prev => prev ? { ...prev, resolvedUrl: data.status.url } : prev);
+                }
+              });
           }
         })
         .catch(() => {
@@ -1576,6 +1672,7 @@ function MediaScrubber() {
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { shareFile: nativeShare } = useNativeShare();
+  const { incrementPhotosScrubbed } = useAppStats();
 
   // ── Detect file type from MIME ──────────────────────────────────────────
   const getFileType = (file: File): FileCard['type'] => {
@@ -1805,6 +1902,8 @@ function MediaScrubber() {
       if (metadata.length === 0) {
         metadata.push({ type: 'none', value: '' });
       }
+
+      incrementPhotosScrubbed();
 
       setFiles(prev =>
         prev.map(f =>
@@ -2366,6 +2465,64 @@ function SplashScreen({ onComplete }: { onComplete: () => void }) {
   );
 }
 
+function StatsDashboard() {
+  const { stats } = useAppStats();
+  const { shareText } = useNativeShare();
+
+  const handleShareScore = async () => {
+    const text = `🏆 My Seycure Privacy Score:\n\n🛡️ Links Cleaned: ${stats.linksCleaned}\n📸 Photos Scrubbed: ${stats.photosScrubbed}\n🚫 Trackers Blocked: ${stats.trackersRemoved}\n\nProtect your data too! Get Seycure here: https://play.google.com/store/apps/details?id=com.arkqube.clrlink`;
+    await shareText(text, 'Share Privacy Score');
+  };
+
+  return (
+    <div className="p-4 space-y-4 animate-fadeUp">
+      <div className="bg-gradient-to-br from-primary-blue to-accent-blue rounded-2xl p-6 text-white shadow-card relative overflow-hidden">
+        <div className="relative z-10">
+          <div className="flex justify-between items-start mb-6">
+            <div>
+              <h2 className="font-sans text-2xl font-bold tracking-tight">Privacy Score</h2>
+              <p className="font-sans text-sm text-white/80 mt-1">Your lifetime digital footprint reduction</p>
+            </div>
+            <Trophy className="w-8 h-8 text-warning-amber drop-shadow-md" />
+          </div>
+          
+          <div className="grid grid-cols-3 gap-4 mb-6">
+            <div className="bg-white/10 rounded-xl p-3 backdrop-blur-sm border border-white/20 text-center">
+              <span className="block font-sans text-2xl font-bold">{stats.trackersRemoved}</span>
+              <span className="block font-sans text-xs text-white/80 mt-1 uppercase tracking-wider">Trackers<br/>Blocked</span>
+            </div>
+            <div className="bg-white/10 rounded-xl p-3 backdrop-blur-sm border border-white/20 text-center">
+              <span className="block font-sans text-2xl font-bold">{stats.photosScrubbed}</span>
+              <span className="block font-sans text-xs text-white/80 mt-1 uppercase tracking-wider">Photos<br/>Scrubbed</span>
+            </div>
+            <div className="bg-white/10 rounded-xl p-3 backdrop-blur-sm border border-white/20 text-center">
+              <span className="block font-sans text-2xl font-bold">{stats.linksCleaned}</span>
+              <span className="block font-sans text-xs text-white/80 mt-1 uppercase tracking-wider">Links<br/>Cleaned</span>
+            </div>
+          </div>
+          
+          <button 
+            onClick={handleShareScore}
+            className="w-full bg-white text-primary-blue font-sans text-sm font-bold py-3 rounded-xl hover:bg-white/90 transition-colors flex items-center justify-center gap-2 shadow-sm"
+          >
+            <Share2 className="w-4 h-4" />
+            Share My Score
+          </button>
+        </div>
+        
+        {/* Background decorative elements */}
+        <div className="absolute -top-12 -right-12 w-32 h-32 bg-white/10 rounded-full blur-2xl" />
+        <div className="absolute -bottom-8 -left-8 w-24 h-24 bg-accent-blue/30 rounded-full blur-xl" />
+      </div>
+
+      {/* Info note */}
+      <p className="font-sans text-xs text-text-secondary text-center px-4">
+        Seycure runs entirely on your device. Your data and stats are never sent to any server.
+      </p>
+    </div>
+  );
+}
+
 function App() {
   const [mode, setMode] = useState<AppMode>('link-shield');
   const [status] = useState<'idle' | 'scanning'>('idle');
@@ -2376,12 +2533,23 @@ function App() {
   const touchStartY = useRef<number | null>(null);
 
   const handleTouchStart = (e: React.TouchEvent) => {
+    // Ignore swipe if touching inside a modal/dialog (like Blur Editor)
+    if ((e.target as HTMLElement).closest('[role="dialog"], [role="alertdialog"]')) {
+      return;
+    }
     touchStartX.current = e.touches[0].clientX;
     touchStartY.current = e.touches[0].clientY;
   };
 
   const handleTouchEnd = (e: React.TouchEvent) => {
     if (touchStartX.current === null || touchStartY.current === null) return;
+    
+    // Check again just to be safe
+    if ((e.target as HTMLElement).closest('[role="dialog"], [role="alertdialog"]')) {
+      touchStartX.current = null;
+      touchStartY.current = null;
+      return;
+    }
     
     const touchEndX = e.changedTouches[0].clientX;
     const touchEndY = e.changedTouches[0].clientY;
@@ -2413,6 +2581,8 @@ function App() {
       case 'media-scrubber':
       case 'privacy-blur':
         return <MediaScrubberTab mode={mode} onModeChange={setMode} />;
+      case 'dashboard':
+        return <StatsDashboard />;
       default:
         return <LinkShield />;
     }

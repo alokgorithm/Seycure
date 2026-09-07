@@ -175,8 +175,8 @@ function checkSuspiciousKeywords(urlStr: string): PhishingSignal | null {
 
 // --- 6. Domain Mismatch in Page Content ---
 // Check if the fetched page title claims to be a top brand, but the domain isn't
-function checkDomainMismatch(domain: string, pageTitle: string): PhishingSignal | null {
-    if (!pageTitle) return null;
+function checkDomainMismatch(domain: string, pageTitle: string, isShortener: boolean): PhishingSignal | null {
+    if (!pageTitle || isShortener) return null; // Shorteners naturally mismatch the content domain
     const titleLow = pageTitle.toLowerCase();
 
     for (const brand of TOP_BRANDS) {
@@ -214,7 +214,8 @@ export function checkPhishingSignals(
     domain: string,
     registeredDomain: string,
     pageTitle: string,
-    hasLoginForm: boolean = false
+    hasLoginForm: boolean = false,
+    isShortener: boolean = false
 ): PhishingSignal[] {
     const signals: PhishingSignal[] = [];
 
@@ -230,7 +231,7 @@ export function checkPhishingSignals(
     const keywords = checkSuspiciousKeywords(url);
     if (keywords) signals.push(keywords);
 
-    const mismatch = checkDomainMismatch(domain, pageTitle);
+    const mismatch = checkDomainMismatch(domain, pageTitle, isShortener);
     if (mismatch) signals.push(mismatch);
 
     // If we have a login form on a page that triggered ANY other signal, it's definitively phishing

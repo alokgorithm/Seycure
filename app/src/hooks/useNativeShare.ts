@@ -48,11 +48,25 @@ export function useNativeShare() {
       // Share the file
       await Share.share({
         title: 'Share Scrubbed Media',
-        text: 'Scrubbed media - metadata removed by Seycure',
+        text: 'Scrubbed media - metadata removed by Seycure\n\n🛡️ Protected by Seycure. Get it here: https://play.google.com/store/apps/details?id=com.arkqube.clrlink',
         url: fileUri.uri,
         dialogTitle: dialogTitle,
       });
 
+      return { success: true };
+    } catch (error) {
+      console.error('Share error:', error);
+      return { success: false, error };
+    }
+  };
+
+  const shareText = async (text: string, title: string = 'Share') => {
+    try {
+      await Share.share({
+        title,
+        text,
+        dialogTitle: title,
+      });
       return { success: true };
     } catch (error) {
       console.error('Share error:', error);
@@ -101,7 +115,7 @@ export function useNativeShare() {
       // Generic share with specific package hint
       await Share.share({
         title: `Share to ${targetApp.name}`,
-        text: 'Scrubbed media - metadata removed by Seycure',
+        text: 'Scrubbed media - metadata removed by Seycure\n\n🛡️ Protected by Seycure. Get it here: https://play.google.com/store/apps/details?id=com.arkqube.clrlink',
         url: fileUri.uri,
         dialogTitle: `Share to ${targetApp.name}`,
       });
@@ -124,6 +138,7 @@ export function useNativeShare() {
 
   return {
     shareFile,
+    shareText,
     shareToSpecificApp,
     canShare,
     SHARE_OPTIONS,
