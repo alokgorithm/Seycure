@@ -19,6 +19,15 @@ export interface BlurRegion {
 
 export type EditorMode = 'add' | 'remove';
 
+/** How a redacted region is painted over. */
+export type RedactionStyle = 'blur' | 'pixelate' | 'black';
+
+export const REDACTION_STYLES: { id: RedactionStyle; label: string }[] = [
+    { id: 'blur', label: 'Blur' },
+    { id: 'pixelate', label: 'Pixelate' },
+    { id: 'black', label: 'Black bar' },
+];
+
 export interface BlurEditorState {
     regions: BlurRegion[];
     mode: EditorMode;
@@ -52,10 +61,73 @@ export function findingsToBlurRegions(findings: ScreenshotFinding[]): BlurRegion
 
 // ── Canvas Rendering ────────────────────────────────────────────────────────
 
+interface PixelRect {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+}
+
+/** Snap a region to whole pixels inside the canvas, or null if it falls outside. */
+function clampRegion(region: BlurRegion, maxWidth: number, maxHeight: number): PixelRect | null {
+    const x = Math.max(0, Math.floor(region.x));
+    const y = Math.max(0, Math.floor(region.y));
+    const width = Math.min(Math.ceil(region.width), maxWidth - x);
+    const height = Math.min(Math.ceil(region.height), maxHeight - y);
+    if (width <= 0 || height <= 0) return null;
+    return { x, y, width, height };
+}
+
+function paintBlur(ctx: CanvasRenderingContext2D, image: HTMLImageElement, rect: PixelRect) {
+    // Scale the radius with the region so a one-line phone number is as
+    // unreadable as a full address block.
+    const radius = Math.min(40, Math.max(10, Math.round(Math.min(rect.width, rect.height) * 0.6)));
+
+    ctx.beginPath();
+    ctx.rect(rect.x, rect.y, rect.width, rect.height);
+    ctx.clip();
+    ctx.filter = `blur(${radius}px)`;
+    ctx.drawImage(image, 0, 0);
+}
+
+function paintPixelate(ctx: CanvasRenderingContext2D, image: HTMLImageElement, rect: PixelRect) {
+    // Downscale the region so each block is about a quarter of its short side,
+    // then blow it back up with smoothing off.
+    const blockSize = Math.max(3, Math.round(Math.min(rect.width, rect.height) / 4));
+    const smallWidth = Math.max(1, Math.round(rect.width / blockSize));
+    const smallHeight = Math.max(1, Math.round(rect.height / blockSize));
+
+    const scratch = document.createElement('canvas');
+    scratch.width = smallWidth;
+    scratch.height = smallHeight;
+
+    const scratchCtx = scratch.getContext('2d');
+    if (!scratchCtx) return;
+
+    scratchCtx.drawImage(
+        image,
+        rect.x, rect.y, rect.width, rect.height,
+        0, 0, smallWidth, smallHeight
+    );
+
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(
+        scratch,
+        0, 0, smallWidth, smallHeight,
+        rect.x, rect.y, rect.width, rect.height
+    );
+}
+
+function paintBlackBar(ctx: CanvasRenderingContext2D, rect: PixelRect) {
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
+}
+
 export function renderToCanvas(
     canvas: HTMLCanvasElement,
     image: HTMLImageElement,
-    regions: BlurRegion[]
+    regions: BlurRegion[],
+    style: RedactionStyle = 'blur'
 ) {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
@@ -64,29 +136,25 @@ export function renderToCanvas(
     canvas.height = image.naturalHeight;
 
     // Draw the full image first
+    ctx.filter = 'none';
+    ctx.imageSmoothingEnabled = true;
     ctx.drawImage(image, 0, 0);
 
-    // Filter regions that actually need blurring
-    const blurRegions = regions.filter(r => r.action !== 'info');
+    // Regions marked 'info' were seen and judged safe, so they stay readable
+    for (const region of regions.filter(r => r.action !== 'info')) {
+        const rect = clampRegion(region, canvas.width, canvas.height);
+        if (!rect) continue;
 
-    // Apply blur to each matching region
-    for (const region of blurRegions) {
         ctx.save();
-
-        // Create clipping path for the region
-        ctx.beginPath();
-        ctx.rect(region.x, region.y, region.width, region.height);
-        ctx.clip();
-
-        // Apply blur filter and redraw the source pixels within the clip
-        ctx.filter = 'blur(18px)';
-        ctx.drawImage(image, 0, 0);
-
+        if (style === 'blur') paintBlur(ctx, image, rect);
+        else if (style === 'pixelate') paintPixelate(ctx, image, rect);
+        else paintBlackBar(ctx, rect);
         ctx.restore();
     }
 
     // Reset filter
     ctx.filter = 'none';
+    ctx.imageSmoothingEnabled = true;
 }
 
 // ── Hook ────────────────────────────────────────────────────────────────────
@@ -96,6 +164,7 @@ export function useBlurEditor(initialFindings: ScreenshotFinding[] = []) {
         findingsToBlurRegions(initialFindings)
     );
     const [mode, setMode] = useState<EditorMode>('add');
+    const [style, setStyle] = useState<RedactionStyle>('blur');
     const [undoStack, setUndoStack] = useState<BlurRegion[][]>([]);
 
     // Track user corrections for learning
@@ -242,6 +311,8 @@ export function useBlurEditor(initialFindings: ScreenshotFinding[] = []) {
         regions,
         mode,
         setMode,
+        style,
+        setStyle,
         autoCount,
         manualCount,
         undoStack,

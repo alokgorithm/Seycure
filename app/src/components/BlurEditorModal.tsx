@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronLeft, Undo2, RotateCcw, Plus, Minus, Download, Share2 } from 'lucide-react';
+import { ChevronLeft, Undo2, RotateCcw, Plus, Minus, Download, Share2, Droplets, Grid3x3, Square } from 'lucide-react';
 import { App as CapacitorApp } from '@capacitor/app';
-import { useBlurEditor, renderToCanvas } from '@/hooks/useBlurEditor';
+import { useBlurEditor, renderToCanvas, REDACTION_STYLES, type RedactionStyle } from '@/hooks/useBlurEditor';
 import { useNativeShare } from '@/hooks/useNativeShare';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import type { ScreenshotFinding } from '@/hooks/useMLKitOCR';
@@ -12,6 +12,12 @@ import {
     textToPattern,
     type AppLayoutRow,
 } from '@/hooks/usePrivacyLearning';
+
+const STYLE_ICONS: Record<RedactionStyle, React.ReactNode> = {
+    blur: <Droplets className="w-3.5 h-3.5" />,
+    pixelate: <Grid3x3 className="w-3.5 h-3.5" />,
+    black: <Square className="w-3.5 h-3.5 fill-current" />,
+};
 
 interface BlurEditorModalProps {
     open: boolean;
@@ -37,6 +43,8 @@ export function BlurEditorModal({ open, onClose, imageBase64, findings, appConte
         regions,
         mode,
         setMode,
+        style,
+        setStyle,
         autoCount,
         manualCount,
         initFromFindings,
@@ -93,8 +101,8 @@ export function BlurEditorModal({ open, onClose, imageBase64, findings, appConte
     // ── Re-render canvas when regions change ───────────────────────────────
     useEffect(() => {
         if (!imageLoaded || !canvasRef.current || !imageRef.current) return;
-        renderToCanvas(canvasRef.current, imageRef.current, regions);
-    }, [imageLoaded, regions]);
+        renderToCanvas(canvasRef.current, imageRef.current, regions, style);
+    }, [imageLoaded, regions, style]);
 
     // ── Convert screen coordinates to canvas coordinates ───────────────────
     const screenToCanvas = useCallback((clientX: number, clientY: number) => {
@@ -405,7 +413,25 @@ export function BlurEditorModal({ open, onClose, imageBase64, findings, appConte
 
             {/* ── Bottom Toolbar ───────────────────────────────────────────────── */}
             <div className="flex-shrink-0 bg-black/80 border-t border-white/10 px-3 py-2 flex flex-col gap-2">
-                {/* Row 1: Mode toggle */}
+                {/* Row 1: Redaction style */}
+                <div className="flex items-center gap-1 bg-white/5 rounded-lg p-1 self-start">
+                    {REDACTION_STYLES.map(option => (
+                        <button
+                            key={option.id}
+                            onClick={() => setStyle(option.id)}
+                            aria-pressed={style === option.id}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-sans text-xs font-medium transition-all ${style === option.id
+                                ? 'bg-white text-black'
+                                : 'text-white/60 hover:text-white'
+                                }`}
+                        >
+                            {STYLE_ICONS[option.id]}
+                            {option.label}
+                        </button>
+                    ))}
+                </div>
+
+                {/* Row 2: Mode toggle */}
                 <div className="flex items-center gap-1 bg-white/5 rounded-lg p-1 self-start">
                     <button
                         onClick={() => setMode('add')}
@@ -429,7 +455,7 @@ export function BlurEditorModal({ open, onClose, imageBase64, findings, appConte
                     </button>
                 </div>
 
-                {/* Row 2: Save / Share */}
+                {/* Row 3: Save / Share */}
                 <div className="flex items-center gap-2">
                     <button
                         onClick={handleSave}
