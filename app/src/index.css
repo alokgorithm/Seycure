@@ -33,18 +33,55 @@
     
     --primary-blue: #0066FF;
     --primary-dark: #0A1628;
-    --primary-light: #E8F1FF;
     --accent-blue: #00A3FF;
     --danger-red: #DC2626;
     --warning-amber: #F59E0B;
     --success-green: #10B981;
-    --text-primary: #1A1A2E;
-    --text-secondary: #64748B;
-    --text-muted: #94A3B8;
     --bg-white: #FFFFFF;
-    --bg-light: #F8FAFC;
-    --bg-card: #FFFFFF;
-    --border-light: #E2E8F0;
+
+    /* Theme-aware surfaces and text, as "R G B" so Tailwind can apply
+       opacity modifiers such as bg-primary-light/50. */
+    --primary-light: 232 241 255;
+    --text-primary: 26 26 46;
+    --text-secondary: 100 116 139;
+    --text-muted: 148 163 184;
+    --bg-light: 248 250 252;
+    --bg-card: 255 255 255;
+    --border-light: 226 232 240;
+
+    color-scheme: light;
+  }
+
+  /* Dark theme. The `dark` class is applied to <html> from main.tsx, which
+     follows the OS setting. */
+  .dark {
+    --background: 220 24% 6%;
+    --foreground: 210 30% 94%;
+    --card: 220 20% 11%;
+    --card-foreground: 210 30% 94%;
+    --popover: 220 20% 11%;
+    --popover-foreground: 210 30% 94%;
+    --primary: 210 100% 55%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 220 18% 16%;
+    --secondary-foreground: 210 30% 94%;
+    --muted: 220 18% 16%;
+    --muted-foreground: 215 15% 65%;
+    --accent: 210 100% 55%;
+    --accent-foreground: 0 0% 100%;
+    --border: 220 16% 20%;
+    --input: 220 16% 20%;
+    --ring: 210 100% 55%;
+
+    --primary-light: 18 35 58;
+    --text-primary: 232 237 245;
+    --text-secondary: 148 163 184;
+    --text-muted: 100 116 139;
+    --bg-light: 12 16 23;
+    --bg-card: 22 26 35;
+    --border-light: 35 42 56;
+
+    color-scheme: dark;
   }
 }
 
@@ -58,7 +95,7 @@
   }
   
   body {
-    @apply bg-white text-foreground antialiased;
+    @apply bg-bg-light text-foreground antialiased;
     font-family: 'Inter', sans-serif;
   }
 }

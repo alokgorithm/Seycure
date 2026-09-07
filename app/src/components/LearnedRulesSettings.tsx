@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Trash2, RotateCcw, Brain, Shield, Eye, Smartphone } from 'lucide-react';
+import { Trash2, RotateCcw, Sliders, Shield, Eye, Smartphone } from 'lucide-react';
 import {
     loadCorrections,
     loadAllAppLayouts,
@@ -60,7 +60,7 @@ export function LearnedRulesSettings() {
         <div className="space-y-4">
             {/* Header */}
             <div className="flex items-center gap-2 mb-2">
-                <Brain className="w-5 h-5 text-purple-400" />
+                <Sliders className="w-5 h-5 text-purple-400" />
                 <h3 className="font-sans text-sm font-semibold text-text-primary">
                     Learned Privacy Rules
                 </h3>
@@ -68,7 +68,7 @@ export function LearnedRulesSettings() {
 
             {!hasAny ? (
                 <div className="bg-card-bg border border-border-subtle rounded-xl p-6 text-center">
-                    <Brain className="w-8 h-8 text-text-secondary mx-auto mb-2 opacity-50" />
+                    <Sliders className="w-8 h-8 text-text-secondary mx-auto mb-2 opacity-50" />
                     <p className="font-sans text-sm text-text-secondary">
                         No learned rules yet
                     </p>

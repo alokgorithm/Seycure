@@ -46,18 +46,22 @@ module.exports = {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        // Brand colours are fixed in both themes.
         "primary-blue": "#0066FF",
         "primary-dark": "#0A1628",
-        "primary-light": "#E8F1FF",
         "accent-blue": "#00A3FF",
         "danger-red": "#DC2626",
         "warning-amber": "#F59E0B",
         "success-green": "#10B981",
-        "text-primary": "#1A1A2E",
-        "text-secondary": "#64748B",
-        "text-muted": "#94A3B8",
-        "bg-light": "#F8FAFC",
-        "border-light": "#E2E8F0",
+        // Surface and text colours flip with the theme. The values live in
+        // index.css so `.dark` can redefine them in one place.
+        "primary-light": "rgb(var(--primary-light) / <alpha-value>)",
+        "text-primary": "rgb(var(--text-primary) / <alpha-value>)",
+        "text-secondary": "rgb(var(--text-secondary) / <alpha-value>)",
+        "text-muted": "rgb(var(--text-muted) / <alpha-value>)",
+        "bg-light": "rgb(var(--bg-light) / <alpha-value>)",
+        "border-light": "rgb(var(--border-light) / <alpha-value>)",
+        "bg-card": "rgb(var(--bg-card) / <alpha-value>)",
       },
       borderRadius: {
         xl: "calc(var(--radius) + 4px)",

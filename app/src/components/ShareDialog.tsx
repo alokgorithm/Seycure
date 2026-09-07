@@ -88,7 +88,7 @@ export function ShareDialog({ open, onClose, fileName, fileType, onShare }: Shar
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-sm bg-white border-border-light p-0 overflow-hidden">
+      <DialogContent className="max-w-sm bg-white dark:bg-bg-card border-border-light p-0 overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 bg-bg-light border-b border-border-light">
           <div>
