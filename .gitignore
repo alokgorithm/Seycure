@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Build output
+app/dist/
+app/android/app/build/
+app/android/build/
+app/android/.gradle/
+app/android/capacitor-cordova-android-plugins/build/
+app/ios/App/build/
+
+# Signing material - never commit
+*.keystore
+*.jks
+keystore.properties
+google-services.json
+
+# Packaged apps
+*.apk
+*.aab
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
