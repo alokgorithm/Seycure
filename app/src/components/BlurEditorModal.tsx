@@ -383,9 +383,9 @@ export function BlurEditorModal({ open, onClose, imageBase64, findings, appConte
                                     height: `${(r.height / (canvasRef.current?.height || 1)) * 100}%`,
                                 }}
                             >
-                                {/* We don't blur, but we show a little badge to indicate we saw it and deemed it safe */}
+                                {/* Outlined, not redacted: either judged safe or switched off by the user */}
                                 <div className="absolute -top-5 right-0 bg-black/60 text-[10px] text-green-400 font-mono px-1 rounded whitespace-nowrap">
-                                    Safe Ref
+                                    Not blurred
                                 </div>
                             </div>
                         ))}

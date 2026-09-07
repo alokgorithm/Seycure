@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { X, Camera, Link2, Image as ImageIcon, ExternalLink, AlertTriangle, Scissors, Check, ChevronRight, Upload, MapPin, Smartphone, Wrench, Download, Share2, Loader2, ArrowRight, Search, Eye, EyeOff, ShieldAlert, ShieldCheck, RefreshCw, FileText, User, Building2, Type, Calendar, ZoomIn, ZoomOut, Trophy } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
 import exifr from 'exifr';
@@ -2156,8 +2156,36 @@ function ScreenshotPrivacyGuard() {
   const [isDragging, setIsDragging] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  /** Findings the user wants redacted. Everything the scan flagged starts on. */
+  const [enabledIds, setEnabledIds] = useState<Set<string>>(new Set());
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { shareFile } = useNativeShare();
+
+  const enabledCount = enabledIds.size;
+  const allEnabled = findings.length > 0 && enabledCount === findings.length;
+
+  const toggleFinding = (id: string) => {
+    setEnabledIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAll = () => {
+    setEnabledIds(allEnabled ? new Set() : new Set(findings.map(f => f.id)));
+  };
+
+  // A finding the user switched off stays in the list as 'info', so the editor
+  // outlines it instead of redacting it.
+  const editorFindings = useMemo(
+    () => findings.map(f => ({
+      ...f,
+      action: enabledIds.has(f.id) ? ('blur' as const) : ('info' as const),
+    })),
+    [findings, enabledIds]
+  );
 
   // ── Direct share (no blur needed) ───────────────────────────────────────
   const handleDirectShare = useCallback(async () => {
@@ -2217,6 +2245,9 @@ function ScreenshotPrivacyGuard() {
     try {
       const result = await analyzeScreenshot(imageBase64);
       setFindings(result.findings);
+      setEnabledIds(new Set(
+        result.findings.filter(f => f.action === 'blur').map(f => f.id)
+      ));
       setAppContext(result.appContext);
       setScanned(true);
     } catch (err) {
@@ -2309,24 +2340,57 @@ function ScreenshotPrivacyGuard() {
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="font-sans text-sm font-semibold text-text-primary">
-              {findings.length > 0 ? `${findings.length} sensitive item${findings.length > 1 ? 's' : ''} found` : 'No sensitive data detected'}
+              {findings.length > 0
+                ? `Found ${findings.length} sensitive item${findings.length > 1 ? 's' : ''}`
+                : 'No sensitive data detected'}
             </h3>
             {findings.length > 0 && (
-              <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-700 font-sans text-xs font-medium">
-                Action needed
-              </span>
+              <button
+                onClick={toggleAll}
+                className="px-2.5 py-1 rounded-full bg-primary-light text-primary-blue font-sans text-xs font-medium hover:bg-primary-blue/15 transition-colors"
+              >
+                {allEnabled ? 'Blur none' : 'Blur all'}
+              </button>
             )}
           </div>
 
-          {findings.map((f, i) => (
-            <div key={i} className={`px-4 py-3 rounded-xl border ${getSeverityStyle(f.severity)} animate-fadeUp`} style={{ animationDelay: `${i * 80}ms` }}>
-              <div className="flex items-center justify-between">
-                <span className="font-sans text-xs font-semibold uppercase tracking-wide">{f.type}</span>
-                <span className="font-sans text-xs font-medium capitalize">{f.severity}</span>
-              </div>
-              <p className="font-mono text-sm mt-1">{f.redacted}</p>
-            </div>
-          ))}
+          {findings.length > 0 && (
+            <p className="font-sans text-xs text-text-secondary -mt-1">
+              {enabledCount === 0
+                ? 'Nothing selected — tap an item to blur it.'
+                : `${enabledCount} of ${findings.length} will be blurred.`}
+            </p>
+          )}
+
+          {findings.map((f, i) => {
+            const on = enabledIds.has(f.id);
+            return (
+              <button
+                key={f.id}
+                onClick={() => toggleFinding(f.id)}
+                aria-pressed={on}
+                className={`w-full text-left px-4 py-3 rounded-xl border transition-all animate-fadeUp ${on ? getSeverityStyle(f.severity) : 'bg-white text-text-secondary border-border-light'
+                  }`}
+                style={{ animationDelay: `${i * 80}ms` }}
+              >
+                <div className="flex items-start gap-3">
+                  <span
+                    className={`mt-0.5 w-5 h-5 flex-shrink-0 rounded-md border flex items-center justify-center transition-colors ${on ? 'bg-primary-blue border-primary-blue' : 'bg-white border-border-light'
+                      }`}
+                  >
+                    {on && <Check className="w-3.5 h-3.5 text-white" />}
+                  </span>
+                  <span className="flex-1 min-w-0">
+                    <span className="flex items-center justify-between gap-2">
+                      <span className="font-sans text-xs font-semibold uppercase tracking-wide">{f.type}</span>
+                      <span className="font-sans text-xs font-medium capitalize">{f.severity}</span>
+                    </span>
+                    <span className="block font-mono text-sm mt-1 truncate">{f.redacted}</span>
+                  </span>
+                </div>
+              </button>
+            );
+          })}
 
           {findings.length > 0 && (
             <button
@@ -2384,7 +2448,7 @@ function ScreenshotPrivacyGuard() {
 
           {/* Rescan button */}
           <button
-            onClick={() => { setScanned(false); setFindings([]); }}
+            onClick={() => { setScanned(false); setFindings([]); setEnabledIds(new Set()); }}
             className="w-full py-2 text-primary-blue font-sans text-xs font-medium hover:underline flex items-center justify-center gap-1"
           >
             <RefreshCw className="w-3 h-3" />
@@ -2399,7 +2463,7 @@ function ScreenshotPrivacyGuard() {
           open={showEditor}
           onClose={() => setShowEditor(false)}
           imageBase64={imageBase64}
-          findings={findings}
+          findings={editorFindings}
           appContext={appContext}
         />
       )}
