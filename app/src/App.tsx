@@ -271,6 +271,17 @@ function TabBar({ mode, onChange }: { mode: AppMode; onChange: (m: AppMode) => v
   );
 }
 
+interface QrPoint { x: number; y: number }
+
+/**
+ * html5-qrcode passes ZXing's resultPoints through at runtime but leaves them
+ * out of its published types, so read them defensively.
+ */
+function getResultPoints(decodedResult: unknown): QrPoint[] {
+  const points = (decodedResult as { result?: { resultPoints?: QrPoint[] } })?.result?.resultPoints;
+  return Array.isArray(points) ? points : [];
+}
+
 function QRScannerModal({ open, onClose, onScan }: { open: boolean; onClose: () => void; onScan: (url: string) => void }) {
   const [phase, setPhase] = useState<'scanning' | 'detected' | 'timeout' | 'permission-denied' | 'error'>('scanning');
   const [cssZoom, setCssZoom] = useState(1);
@@ -435,10 +446,10 @@ function QRScannerModal({ open, onClose, onScan }: { open: boolean; onClose: () 
 
             // Auto Zoom animation to the code
             const videoEl = document.querySelector('#seycure-qr-reader video') as HTMLVideoElement;
-            if (videoEl && decodedResult?.result?.resultPoints?.length > 0) {
-              const points = decodedResult.result.resultPoints;
+            const points = getResultPoints(decodedResult);
+            if (videoEl && points.length > 0) {
               let cx = 0, cy = 0;
-              points.forEach((p: any) => { cx += p.x; cy += p.y; });
+              points.forEach((p) => { cx += p.x; cy += p.y; });
               cx /= points.length;
               cy /= points.length;
               
@@ -528,10 +539,10 @@ function QRScannerModal({ open, onClose, onScan }: { open: boolean; onClose: () 
           if (timeoutRef.current) clearTimeout(timeoutRef.current);
 
           const videoEl = document.querySelector('#seycure-qr-reader video') as HTMLVideoElement;
-          if (videoEl && decodedResult?.result?.resultPoints?.length > 0) {
-            const points = decodedResult.result.resultPoints;
+          const points = getResultPoints(decodedResult);
+          if (videoEl && points.length > 0) {
             let cx = 0, cy = 0;
-            points.forEach((p: any) => { cx += p.x; cy += p.y; });
+            points.forEach((p) => { cx += p.x; cy += p.y; });
             cx /= points.length;
             cy /= points.length;
             const vw = videoEl.videoWidth || 320;

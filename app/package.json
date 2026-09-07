@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "verify:patterns": "node --disable-warning=ExperimentalWarning --experimental-strip-types scripts/verify-patterns.ts"
   },
   "dependencies": {
     "@capacitor/android": "^6.2.1",
