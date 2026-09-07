@@ -4,6 +4,7 @@ import { ChevronLeft, Undo2, RotateCcw, Plus, Minus, Download, Share2, Droplets,
 import { App as CapacitorApp } from '@capacitor/app';
 import { useBlurEditor, renderToCanvas, REDACTION_STYLES, type RedactionStyle } from '@/hooks/useBlurEditor';
 import { useNativeShare } from '@/hooks/useNativeShare';
+import { useAppStats } from '@/hooks/useAppStats';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import type { ScreenshotFinding } from '@/hooks/useMLKitOCR';
 import {
@@ -38,6 +39,7 @@ export function BlurEditorModal({ open, onClose, imageBase64, findings, appConte
     const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
 
     const { shareFile } = useNativeShare();
+    const { incrementScreenshotsProtected } = useAppStats();
 
     const {
         regions,
@@ -246,6 +248,7 @@ export function BlurEditorModal({ open, onClose, imageBase64, findings, appConte
 
             // Persist learning on successful save
             await persistLearning();
+            await incrementScreenshotsProtected();
 
             setSaved(true);
             setTimeout(() => setSaved(false), 3000);
@@ -258,13 +261,14 @@ export function BlurEditorModal({ open, onClose, imageBase64, findings, appConte
                 link.href = canvasRef.current.toDataURL('image/png');
                 link.click();
                 await persistLearning();
+                await incrementScreenshotsProtected();
                 setSaved(true);
                 setTimeout(() => setSaved(false), 3000);
             }
         } finally {
             setSaving(false);
         }
-    }, [exportBlurred, persistLearning]);
+    }, [exportBlurred, persistLearning, incrementScreenshotsProtected]);
 
     // ── Share ──────────────────────────────────────────────────────────────
     const handleShare = useCallback(async () => {
@@ -272,7 +276,8 @@ export function BlurEditorModal({ open, onClose, imageBase64, findings, appConte
         const base64 = exportBlurred(canvasRef.current);
         await shareFile('seycure_blurred.png', base64, 'image/png', 'Share blurred screenshot');
         await persistLearning();
-    }, [exportBlurred, shareFile, persistLearning]);
+        await incrementScreenshotsProtected();
+    }, [exportBlurred, shareFile, persistLearning, incrementScreenshotsProtected]);
 
     if (!open) return null;
 

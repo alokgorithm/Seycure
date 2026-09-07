@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from 'react';
-import { X, Camera, Link2, Image as ImageIcon, ExternalLink, AlertTriangle, Scissors, Check, ChevronRight, Upload, MapPin, Smartphone, Wrench, Download, Share2, Loader2, ArrowRight, Search, Eye, EyeOff, ShieldAlert, ShieldCheck, RefreshCw, FileText, User, Building2, Type, Calendar, ZoomIn, ZoomOut, Trophy } from 'lucide-react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { X, Camera, Link2, Image as ImageIcon, ExternalLink, AlertTriangle, Scissors, Check, ChevronRight, Upload, MapPin, Smartphone, Wrench, Download, Share2, Loader2, ArrowRight, Search, Eye, EyeOff, ShieldAlert, ShieldCheck, RefreshCw, FileText, User, Building2, Type, Calendar, ZoomIn, ZoomOut, Trophy, MoreVertical, QrCode, Shield, Sliders, Settings as SettingsIcon, Zap, Clipboard, Lock, Sparkles } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
 import exifr from 'exifr';
 import { PDFDocument } from 'pdf-lib';
@@ -18,7 +18,7 @@ import { classifyLink, type CategoryResult } from '@/hooks/useLinkClassifier';
 import { checkPhishingSignals, type PhishingSignal } from '@/hooks/usePhishingDetector';
 
 // Types
-type AppMode = 'link-shield' | 'media-scrubber' | 'privacy-blur' | 'dashboard';
+export type AppMode = 'link-shield' | 'media-scrubber' | 'privacy-blur' | 'dashboard';
 
 interface TrackerParam {
   name: string;
@@ -200,62 +200,26 @@ function fileToBase64(file: File): Promise<string> {
 }
 
 // Components
-function TopBar({ status }: { status: 'idle' | 'scanning' }) {
-  const [time, setTime] = useState(new Date());
-
-  useEffect(() => {
-    const timer = setInterval(() => setTime(new Date()), 1000);
-    return () => clearInterval(timer);
-  }, []);
-
+function TopBar({ onOpenMenu }: { onOpenMenu: () => void }) {
   return (
-    <div className="flex items-center justify-between px-4 py-3 bg-white border-b border-border-light shadow-sm">
-      <div className="flex items-center gap-3">
-        <img src="/logo.png" alt="Seycure" className="w-8 h-8 object-contain rounded-md" />
+    <div className="flex items-center justify-between px-5 py-3.5 bg-white dark:bg-[#0c1017] border-b border-border-light dark:border-white/10 shadow-xs sticky top-0 z-30">
+      <div className="flex items-center gap-2.5">
+        <img src="/logo.png" alt="Seycure" className="w-8 h-8 object-contain rounded-xl shadow-xs" />
         <div className="flex items-center gap-2">
-          <span className="font-sans text-base font-semibold text-primary-dark">Seycure</span>
-          <span className="text-text-muted text-sm">by</span>
-          <span className="font-sans text-sm font-medium text-primary-blue">ArkQube</span>
+          <span className="font-sans text-lg font-bold text-text-primary dark:text-white tracking-tight">Seycure</span>
+          <span className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            On-Device
+          </span>
         </div>
-        <div className={`w-2 h-2 rounded-full ml-2 ${status === 'scanning' ? 'bg-warning-amber animate-pulse-glow' : 'bg-success-green'}`} />
       </div>
-      <div className="font-mono text-label text-text-secondary">
-        {time.toLocaleTimeString('en-US', { hour12: false })}
-      </div>
-    </div>
-  );
-}
-
-/**
- * Tab order is the product order: Privacy Blur is the app, the rest are
- * secondary. It also drives swipe navigation.
- */
-const TABS: { id: AppMode; label: string; shortLabel: string; icon: ReactNode }[] = [
-  { id: 'privacy-blur', label: 'Privacy Blur', shortLabel: 'Blur', icon: <EyeOff className="w-4 h-4" /> },
-  { id: 'media-scrubber', label: 'Metadata', shortLabel: 'Meta', icon: <Scissors className="w-4 h-4" /> },
-  { id: 'link-shield', label: 'Link / QR', shortLabel: 'Link', icon: <Link2 className="w-4 h-4" /> },
-  { id: 'dashboard', label: 'Stats', shortLabel: 'Stats', icon: <ShieldCheck className="w-4 h-4" /> },
-];
-
-function TabBar({ mode, onChange }: { mode: AppMode; onChange: (m: AppMode) => void }) {
-  return (
-    <div className="flex justify-center px-2 py-4">
-      <div className="inline-flex bg-bg-light rounded-xl p-1 shadow-card">
-        {TABS.map(tab => (
-          <button
-            key={tab.id}
-            onClick={() => onChange(tab.id)}
-            className={`px-3 sm:px-4 py-2.5 rounded-lg font-sans text-xs sm:text-sm font-medium transition-all duration-150 flex items-center gap-1.5 ${mode === tab.id
-              ? 'bg-primary-blue text-white shadow-glow'
-              : 'text-text-secondary hover:text-text-primary'
-              }`}
-          >
-            {tab.icon}
-            <span className="hidden sm:inline">{tab.label}</span>
-            <span className="sm:hidden">{tab.shortLabel}</span>
-          </button>
-        ))}
-      </div>
+      <button
+        onClick={onOpenMenu}
+        className="p-2 rounded-xl text-text-secondary hover:text-text-primary dark:text-text-muted dark:hover:text-white hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+        aria-label="Three-dot menu"
+      >
+        <MoreVertical className="w-5 h-5" />
+      </button>
     </div>
   );
 }
@@ -273,29 +237,148 @@ function getResultPoints(decodedResult: unknown): QrPoint[] {
 
 function QRScannerModal({ open, onClose, onScan }: { open: boolean; onClose: () => void; onScan: (url: string) => void }) {
   const [phase, setPhase] = useState<'scanning' | 'detected' | 'timeout' | 'permission-denied' | 'error'>('scanning');
-  const [cssZoom, setCssZoom] = useState(1);
+  const [zoomLevel, setZoomLevel] = useState(1);
+  const [autoZoomActive, setAutoZoomActive] = useState(true);
+  const [hasTorch, setHasTorch] = useState(false);
+  const [torchOn, setTorchOn] = useState(false);
+
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const detectedRef = useRef(false);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const detectorIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
 
-  // CSS zoom: always works — applies transform:scale to the live video element
-  const handleZoomChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newZoom = Number(e.target.value);
-    setCssZoom(newZoom);
+  const getCameraTrack = useCallback((): MediaStreamTrack | null => {
+    try {
+      const scanner = scannerRef.current as any;
+      if (!scanner) return null;
+      if (typeof scanner.getRunningTrack === 'function') {
+        return scanner.getRunningTrack();
+      }
+      if (scanner.runningStream && typeof scanner.runningStream.getVideoTracks === 'function') {
+        return scanner.runningStream.getVideoTracks()[0] || null;
+      }
+    } catch {}
+    return null;
+  }, []);
+
+  const applyZoom = useCallback((newZoom: number) => {
+    setZoomLevel(newZoom);
     const videoEl = document.querySelector('#seycure-qr-reader video') as HTMLVideoElement;
     if (videoEl) {
+      videoEl.style.transition = 'transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1)';
       videoEl.style.transform = `scale(${newZoom})`;
       videoEl.style.transformOrigin = 'center center';
     }
+    const track = getCameraTrack();
+    if (track && track.applyConstraints) {
+      const caps = track.getCapabilities ? (track.getCapabilities() as any) : null;
+      if (caps?.zoom) {
+        const hwZoom = Math.min(caps.zoom.max || 3, Math.max(caps.zoom.min || 1, newZoom));
+        track.applyConstraints({ advanced: [{ zoom: hwZoom } as any] }).catch(() => {});
+      }
+    }
+  }, [getCameraTrack]);
+
+  const handleManualZoom = (val: number) => {
+    setAutoZoomActive(false);
+    applyZoom(val);
   };
+
+  const toggleTorch = async () => {
+    const track = getCameraTrack();
+    if (!track) return;
+    try {
+      const nextTorch = !torchOn;
+      await track.applyConstraints({ advanced: [{ torch: nextTorch } as any] });
+      setTorchOn(nextTorch);
+    } catch (e) {
+      console.error('Torch error:', e);
+    }
+  };
+
+  /**
+   * Continuous auto-focus, torch detection and the live auto-zoom loop.
+   * Both the first start and Retry go through here, so retrying does not
+   * leave the scanner without auto-zoom.
+   */
+  const startCameraAssists = useCallback(async (isCancelled: () => boolean) => {
+    if (detectorIntervalRef.current) {
+      clearInterval(detectorIntervalRef.current);
+      detectorIntervalRef.current = null;
+    }
+
+    try {
+      const track = getCameraTrack();
+      if (track) {
+        const caps = (track.getCapabilities ? track.getCapabilities() : {}) as any;
+
+        if (caps.focusMode && Array.isArray(caps.focusMode) && caps.focusMode.includes('continuous')) {
+          await track.applyConstraints({ advanced: [{ focusMode: 'continuous' } as any] }).catch(() => { });
+        }
+
+        setHasTorch(Boolean(caps.torch));
+      } else {
+        setHasTorch(false);
+      }
+    } catch (err) {
+      console.log('AutoFocus setup:', err);
+    }
+
+    if (isCancelled()) return;
+    if (typeof window === 'undefined' || !('BarcodeDetector' in window)) return;
+
+    try {
+      const detector = new (window as any).BarcodeDetector({ formats: ['qr_code'] });
+      detectorIntervalRef.current = setInterval(async () => {
+        if (isCancelled() || detectedRef.current) return;
+        const videoEl = document.querySelector('#seycure-qr-reader video') as HTMLVideoElement;
+        if (!videoEl || videoEl.readyState < 2) return;
+
+        try {
+          const codes = await detector.detect(videoEl);
+          if (!codes || codes.length === 0 || detectedRef.current) return;
+
+          const box = codes[0].boundingBox;
+          const vw = videoEl.videoWidth || 320;
+          const vh = videoEl.videoHeight || 320;
+          const qrRatio = box.width / vw;
+
+          // If the code is small in frame, zoom towards it.
+          if (qrRatio < 0.45 && qrRatio > 0.04) {
+            const targetZoom = Math.min(3.0, Math.max(1.3, 0.65 / qrRatio));
+            setAutoZoomActive(true);
+            setZoomLevel(Number(targetZoom.toFixed(1)));
+
+            const cx = box.x + box.width / 2;
+            const cy = box.y + box.height / 2;
+
+            videoEl.style.transition = 'transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1)';
+            videoEl.style.transformOrigin = `${(cx / vw) * 100}% ${(cy / vh) * 100}%`;
+            videoEl.style.transform = `scale(${targetZoom})`;
+
+            // Also try hardware zoom
+            const track = getCameraTrack();
+            const trCaps = track?.getCapabilities ? (track.getCapabilities() as any) : null;
+            if (trCaps?.zoom && track) {
+              const hwZoom = Math.min(trCaps.zoom.max || 3, targetZoom);
+              track.applyConstraints({ advanced: [{ zoom: hwZoom } as any] }).catch(() => { });
+            }
+          }
+        } catch {
+          // Detection can fail on a frame; the next tick retries.
+        }
+      }, 250);
+    } catch (err) {
+      console.log('BarcodeDetector init error:', err);
+    }
+  }, [getCameraTrack]);
 
   const handleScanFromGallery = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Helper: try scanning a canvas crop
     const tryScanCanvas = (canvas: HTMLCanvasElement): Promise<string> => {
       return new Promise((resolve, reject) => {
         canvas.toBlob(async (blob) => {
@@ -325,14 +408,14 @@ function QRScannerModal({ open, onClose, onScan }: { open: boolean; onClose: () 
         tempScanner.clear();
         setPhase('detected');
         detectedRef.current = true;
-        setTimeout(() => { onScan(result); onClose(); }, 150);
+        setTimeout(() => { onScan(result); onClose(); }, 200);
         if (galleryInputRef.current) galleryInputRef.current.value = '';
         return;
       } catch {
         // Full scan failed, try tiled crops
       }
 
-      // 2. Tile scan: divide image into 4 quadrants and try each
+      // 2. Tile scan
       const img = await new Promise<HTMLImageElement>((resolve, reject) => {
         const image = new Image();
         image.onload = () => resolve(image);
@@ -343,11 +426,11 @@ function QRScannerModal({ open, onClose, onScan }: { open: boolean; onClose: () 
       const W = img.naturalWidth;
       const H = img.naturalHeight;
       const crops = [
-        { x: 0,       y: 0,       w: W / 2, h: H / 2 },  // top-left
-        { x: W / 2,   y: 0,       w: W / 2, h: H / 2 },  // top-right
-        { x: 0,       y: H / 2,   w: W / 2, h: H / 2 },  // bottom-left
-        { x: W / 2,   y: H / 2,   w: W / 2, h: H / 2 },  // bottom-right
-        { x: W * 0.25, y: H * 0.25, w: W * 0.5, h: H * 0.5 }, // center
+        { x: 0, y: 0, w: W / 2, h: H / 2 },
+        { x: W / 2, y: 0, w: W / 2, h: H / 2 },
+        { x: 0, y: H / 2, w: W / 2, h: H / 2 },
+        { x: W / 2, y: H / 2, w: W / 2, h: H / 2 },
+        { x: W * 0.25, y: H * 0.25, w: W * 0.5, h: H * 0.5 },
       ];
 
       for (const { x, y, w, h } of crops) {
@@ -360,15 +443,14 @@ function QRScannerModal({ open, onClose, onScan }: { open: boolean; onClose: () 
           const result = await tryScanCanvas(canvas);
           setPhase('detected');
           detectedRef.current = true;
-          setTimeout(() => { onScan(result); onClose(); }, 150);
+          setTimeout(() => { onScan(result); onClose(); }, 200);
           if (galleryInputRef.current) galleryInputRef.current.value = '';
           return;
         } catch {
-          // This crop had no QR, try next
+          // Continue
         }
       }
 
-      // All crops failed
       setPhase('timeout');
     } catch {
       setPhase('timeout');
@@ -382,20 +464,20 @@ function QRScannerModal({ open, onClose, onScan }: { open: boolean; onClose: () 
       clearTimeout(timeoutRef.current);
       timeoutRef.current = null;
     }
+    if (detectorIntervalRef.current) {
+      clearInterval(detectorIntervalRef.current);
+      detectorIntervalRef.current = null;
+    }
     if (scannerRef.current) {
       try {
         const state = scannerRef.current.getState();
-        if (state === 2 /* SCANNING */ || state === 3 /* PAUSED */) {
+        if (state === 2 || state === 3) {
           await scannerRef.current.stop();
         }
-      } catch {
-        // Scanner may already be stopped
-      }
+      } catch {}
       try {
         scannerRef.current.clear();
-      } catch {
-        // Ignore
-      }
+      } catch {}
       scannerRef.current = null;
     }
   }, []);
@@ -405,11 +487,13 @@ function QRScannerModal({ open, onClose, onScan }: { open: boolean; onClose: () 
 
     setPhase('scanning');
     detectedRef.current = false;
+    setZoomLevel(1);
+    setAutoZoomActive(true);
+    setTorchOn(false);
     let cancelled = false;
 
     const startScanner = async () => {
-      // Small delay to let the DOM render the container
-      await new Promise(r => setTimeout(r, 300));
+      await new Promise(r => setTimeout(r, 250));
       if (cancelled) return;
 
       const scannerId = 'seycure-qr-reader';
@@ -423,8 +507,12 @@ function QRScannerModal({ open, onClose, onScan }: { open: boolean; onClose: () 
         await scanner.start(
           { facingMode: 'environment' },
           {
-            fps: 10,
-            qrbox: { width: 300, height: 300 },
+            fps: 15,
+            qrbox: (viewfinderWidth, viewfinderHeight) => {
+              const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
+              const qrboxSize = Math.floor(minEdge * 0.75);
+              return { width: qrboxSize, height: qrboxSize };
+            },
             aspectRatio: 1,
           },
           (decodedText, decodedResult) => {
@@ -432,8 +520,9 @@ function QRScannerModal({ open, onClose, onScan }: { open: boolean; onClose: () 
             detectedRef.current = true;
             setPhase('detected');
             if (timeoutRef.current) clearTimeout(timeoutRef.current);
+            if (detectorIntervalRef.current) clearInterval(detectorIntervalRef.current);
 
-            // Auto Zoom animation to the code
+            // Final lock zoom animation
             const videoEl = document.querySelector('#seycure-qr-reader video') as HTMLVideoElement;
             const points = getResultPoints(decodedResult);
             if (videoEl && points.length > 0) {
@@ -441,50 +530,41 @@ function QRScannerModal({ open, onClose, onScan }: { open: boolean; onClose: () 
               points.forEach((p) => { cx += p.x; cy += p.y; });
               cx /= points.length;
               cy /= points.length;
-              
+
               const vw = videoEl.videoWidth || 320;
               const vh = videoEl.videoHeight || 320;
               const px = (cx / vw) * 100;
               const py = (cy / vh) * 100;
-              
+
               videoEl.style.transformOrigin = `${px}% ${py}%`;
-              videoEl.style.transition = 'all 0.6s cubic-bezier(0.4, 0, 0.2, 1)';
-              videoEl.style.transform = `scale(${Math.max(cssZoom * 1.5, 2.8)})`;
+              videoEl.style.transition = 'all 0.5s cubic-bezier(0.2, 0.8, 0.2, 1)';
+              videoEl.style.transform = `scale(2.5)`;
             }
 
-            // Delay to show the detection zoom animation
             setTimeout(() => {
               if (!cancelled) {
                 onScan(decodedText);
                 onClose();
               }
-              // Stop scanning after closing to not interrupt the zoom animation
-              scanner.stop().catch(() => { });
-            }, 600);
+              scanner.stop().catch(() => {});
+            }, 550);
           },
-          () => {
-            // QR code not found in frame — this fires every frame, ignore
-          }
+          () => {}
         );
 
-        // 30s timeout
+        // Continuous auto-focus, torch capability, and live auto-zoom
+        setTimeout(() => {
+          if (cancelled) return;
+          void startCameraAssists(() => cancelled);
+        }, 600);
+
+        // 35s timeout
         timeoutRef.current = setTimeout(() => {
           if (!cancelled) {
             setPhase('timeout');
-            scanner.stop().catch(() => { });
+            scanner.stop().catch(() => {});
           }
-        }, 30000);
-
-        // Remove old zoom polling — we use CSS zoom instead
-        // Just apply CSS zoom to video after it starts
-        setTimeout(() => {
-          if (cancelled) return;
-          const videoEl = document.querySelector('#seycure-qr-reader video') as HTMLVideoElement;
-          if (videoEl) {
-            videoEl.style.transform = `scale(${cssZoom})`;
-            videoEl.style.transformOrigin = 'center center';
-          }
-        }, 600);
+        }, 35000);
 
       } catch (err: unknown) {
         if (cancelled) return;
@@ -503,13 +583,17 @@ function QRScannerModal({ open, onClose, onScan }: { open: boolean; onClose: () 
       cancelled = true;
       stopScanner();
     };
-  }, [open, onScan, onClose, stopScanner]);
+  }, [open, onScan, onClose, stopScanner, startCameraAssists]);
 
   const handleRetry = async () => {
     await stopScanner();
     setPhase('scanning');
-    // Re-trigger by toggling — the effect depends on `open`
-    // We just need to restart, so we'll re-run the start logic
+    detectedRef.current = false;
+    setZoomLevel(1);
+    setAutoZoomActive(true);
+    setTorchOn(false);
+    setHasTorch(false);
+
     const scannerId = 'seycure-qr-reader';
     const scannerEl = document.getElementById(scannerId);
     if (!scannerEl) return;
@@ -520,12 +604,21 @@ function QRScannerModal({ open, onClose, onScan }: { open: boolean; onClose: () 
 
       await scanner.start(
         { facingMode: 'environment' },
-        { fps: 10, qrbox: { width: 230, height: 230 }, aspectRatio: 1 },
+        {
+          fps: 15,
+          qrbox: (viewfinderWidth, viewfinderHeight) => {
+            const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
+            const qrboxSize = Math.floor(minEdge * 0.75);
+            return { width: qrboxSize, height: qrboxSize };
+          },
+          aspectRatio: 1,
+        },
         (decodedText, decodedResult) => {
           if (detectedRef.current) return;
           detectedRef.current = true;
           setPhase('detected');
           if (timeoutRef.current) clearTimeout(timeoutRef.current);
+          if (detectorIntervalRef.current) clearInterval(detectorIntervalRef.current);
 
           const videoEl = document.querySelector('#seycure-qr-reader video') as HTMLVideoElement;
           const points = getResultPoints(decodedResult);
@@ -537,23 +630,28 @@ function QRScannerModal({ open, onClose, onScan }: { open: boolean; onClose: () 
             const vw = videoEl.videoWidth || 320;
             const vh = videoEl.videoHeight || 320;
             videoEl.style.transformOrigin = `${(cx / vw) * 100}% ${(cy / vh) * 100}%`;
-            videoEl.style.transition = 'all 0.6s cubic-bezier(0.4, 0, 0.2, 1)';
-            videoEl.style.transform = `scale(${Math.max(cssZoom * 1.5, 2.8)})`;
+            videoEl.style.transition = 'all 0.5s cubic-bezier(0.2, 0.8, 0.2, 1)';
+            videoEl.style.transform = `scale(2.5)`;
           }
 
           setTimeout(() => {
             onScan(decodedText);
             onClose();
-            scanner.stop().catch(() => { });
-          }, 600);
+            scanner.stop().catch(() => {});
+          }, 550);
         },
-        () => { }
+        () => {}
       );
 
       timeoutRef.current = setTimeout(() => {
         setPhase('timeout');
-        scanner.stop().catch(() => { });
-      }, 30000);
+        scanner.stop().catch(() => {});
+      }, 35000);
+
+      // Retry restarts the camera, so the assists have to be restarted too.
+      setTimeout(() => {
+        void startCameraAssists(() => detectedRef.current);
+      }, 600);
     } catch {
       setPhase('error');
     }
@@ -566,94 +664,162 @@ function QRScannerModal({ open, onClose, onScan }: { open: boolean; onClose: () 
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-w-md bg-white/95 dark:bg-primary-dark/95 border-border-light dark:border-primary-blue/30 backdrop-blur-xl p-0 overflow-hidden">
-        <div className="relative p-8">
-          {/* Corner brackets */}
-          <div className="absolute top-4 left-4 w-8 h-8 border-t-2 border-l-2 border-primary-blue transition-colors duration-300" />
-          <div className="absolute top-4 right-4 w-8 h-8 border-t-2 border-r-2 border-primary-blue transition-colors duration-300" />
-          <div className="absolute bottom-4 left-4 w-8 h-8 border-b-2 border-l-2 border-primary-blue transition-colors duration-300" />
-          <div className="absolute bottom-4 right-4 w-8 h-8 border-b-2 border-r-2 border-primary-blue transition-colors duration-300" />
+      <DialogContent className="max-w-md bg-zinc-950 text-white border border-white/10 p-0 overflow-hidden rounded-3xl shadow-2xl backdrop-blur-2xl">
+        <div className="relative p-6 flex flex-col items-center">
+          
+          {/* Header Bar */}
+          <div className="w-full flex items-center justify-between mb-4 px-1">
+            <div className="flex items-center gap-2">
+              <span className="font-sans text-sm font-bold text-white tracking-tight">Scan QR Code</span>
+            </div>
 
-          {/* Viewfinder — html5-qrcode renders camera feed here */}
-          <div ref={containerRef} className="relative w-[320px] h-[320px] mx-auto bg-black/50 overflow-hidden rounded-lg shadow-inner">
+            <div className="flex items-center gap-2">
+              {hasTorch && (
+                <button
+                  onClick={toggleTorch}
+                  className={`p-2 rounded-xl transition-all ${
+                    torchOn 
+                      ? 'bg-amber-400 text-zinc-950 shadow-glow-amber' 
+                      : 'bg-white/10 text-white hover:bg-white/20'
+                  }`}
+                  aria-label="Flashlight"
+                >
+                  <Zap className="w-4 h-4" />
+                </button>
+              )}
+              <button
+                onClick={handleClose}
+                className="p-2 rounded-xl bg-white/10 text-white/70 hover:text-white hover:bg-white/20 transition-colors"
+                aria-label="Close"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          {/* Viewfinder — Edge-to-edge camera feed */}
+          <div ref={containerRef} className="relative w-[300px] h-[300px] mx-auto bg-black overflow-hidden rounded-2xl border border-white/10 shadow-inner">
             <div id="seycure-qr-reader" className="w-full h-full [&>video]:object-cover" />
 
             {phase === 'scanning' && (
               <>
-                <div className="absolute inset-x-0 h-1 bg-primary-blue shadow-glow-strong animate-scanline pointer-events-none z-10" />
-                {/* Central scanning reticle */}
-                <div className="absolute inset-0 m-auto w-[230px] h-[230px] border-2 border-primary-blue/40 rounded-[20px] pointer-events-none z-10">
-                  <div className="absolute top-0 left-0 w-4 h-4 border-t-2 border-l-2 border-primary-blue rounded-tl-[16px]" />
-                  <div className="absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 border-primary-blue rounded-tr-[16px]" />
-                  <div className="absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 border-primary-blue rounded-bl-[16px]" />
-                  <div className="absolute bottom-0 right-0 w-4 h-4 border-b-2 border-r-2 border-primary-blue rounded-br-[16px]" />
+                {/* Glowing Laser line */}
+                <div className="absolute inset-x-0 h-1 bg-gradient-to-r from-transparent via-cyan-400 to-transparent shadow-[0_0_15px_#00f2fe] animate-scanline pointer-events-none z-10" />
+
+                {/* Sleek Corner Brackets */}
+                <div className="absolute inset-4 pointer-events-none z-10">
+                  <div className="absolute top-0 left-0 w-6 h-6 border-t-2 border-l-2 border-cyan-400 rounded-tl-lg" />
+                  <div className="absolute top-0 right-0 w-6 h-6 border-t-2 border-r-2 border-cyan-400 rounded-tr-lg" />
+                  <div className="absolute bottom-0 left-0 w-6 h-6 border-b-2 border-l-2 border-cyan-400 rounded-bl-lg" />
+                  <div className="absolute bottom-0 right-0 w-6 h-6 border-b-2 border-r-2 border-cyan-400 rounded-br-lg" />
                 </div>
               </>
             )}
+
             {phase === 'detected' && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black/40 z-10">
-                <div className="w-16 h-16 rounded-full bg-primary-blue flex items-center justify-center animate-modalIn">
-                  <Check className="w-8 h-8 text-white" />
+              <div className="absolute inset-0 flex items-center justify-center bg-black/60 z-20 backdrop-blur-sm animate-modalIn">
+                <div className="w-16 h-16 rounded-full bg-emerald-500 flex items-center justify-center shadow-lg shadow-emerald-500/40">
+                  <Check className="w-8 h-8 text-white stroke-[3]" />
                 </div>
               </div>
             )}
           </div>
 
-          {/* Zoom Control — always visible during scanning */}
+          {/* Quick Zoom Buttons & Slider */}
           {phase === 'scanning' && (
-            <div className="mt-4 px-6 flex items-center gap-3">
-              <ZoomOut className="w-5 h-5 text-primary-blue/70 flex-shrink-0" />
-              <input 
-                type="range" 
-                min={1} 
-                max={3} 
-                step={0.1} 
-                value={cssZoom}
-                onChange={handleZoomChange}
-                className="flex-1 h-1.5 bg-primary-blue/20 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:h-5 [&::-webkit-slider-thumb]:bg-primary-blue [&::-webkit-slider-thumb]:rounded-full"
-              />
-              <ZoomIn className="w-5 h-5 text-primary-blue flex-shrink-0" />
+            <div className="w-full mt-4 px-2 flex flex-col items-center gap-2">
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleManualZoom(1)}
+                  className={`px-3 py-1 rounded-full text-xs font-semibold transition-all ${
+                    zoomLevel === 1 && !autoZoomActive
+                      ? 'bg-primary-blue text-white shadow-glow'
+                      : 'bg-white/10 text-white/70 hover:bg-white/20'
+                  }`}
+                >
+                  1x
+                </button>
+                <button
+                  onClick={() => handleManualZoom(2)}
+                  className={`px-3 py-1 rounded-full text-xs font-semibold transition-all ${
+                    zoomLevel === 2 && !autoZoomActive
+                      ? 'bg-primary-blue text-white shadow-glow'
+                      : 'bg-white/10 text-white/70 hover:bg-white/20'
+                  }`}
+                >
+                  2x
+                </button>
+                <button
+                  onClick={() => {
+                    setAutoZoomActive(true);
+                    applyZoom(1);
+                  }}
+                  className={`px-3 py-1 rounded-full text-xs font-semibold flex items-center gap-1 transition-all ${
+                    autoZoomActive
+                      ? 'bg-accent-blue text-white shadow-glow'
+                      : 'bg-white/10 text-white/70 hover:bg-white/20'
+                  }`}
+                >
+                  <Sparkles className="w-3 h-3 text-cyan-300" />
+                  Auto Zoom
+                </button>
+              </div>
+
+              {/* Fine Zoom Slider */}
+              <div className="w-full flex items-center gap-3 px-4 mt-1">
+                <ZoomOut className="w-4 h-4 text-white/50 shrink-0" />
+                <input
+                  type="range"
+                  min={1}
+                  max={3}
+                  step={0.1}
+                  value={zoomLevel}
+                  onChange={(e) => handleManualZoom(Number(e.target.value))}
+                  className="flex-1 h-1.5 bg-white/20 rounded-lg appearance-none cursor-pointer accent-cyan-400"
+                />
+                <ZoomIn className="w-4 h-4 text-cyan-400 shrink-0" />
+              </div>
             </div>
           )}
 
-          {/* Status text */}
-          <div className="text-center mt-6">
+          {/* User Guidance */}
+          <div className="text-center mt-3">
             {phase === 'scanning' && (
-              <p className="font-sans text-sm font-medium text-primary-blue animate-pulse">Scanning...</p>
+              <p className="font-sans text-xs font-medium text-white/80">
+                Point camera at a QR code to scan
+              </p>
             )}
             {phase === 'detected' && (
-              <p className="font-sans text-sm font-medium text-primary-blue">Detected</p>
+              <p className="font-sans text-sm font-bold text-emerald-400">QR Code Verified!</p>
             )}
             {phase === 'timeout' && (
-              <div className="space-y-4">
-                <p className="font-sans text-sm font-medium text-warning-amber">No QR Code Found</p>
-                <Button onClick={handleRetry} variant="outline" className="border-primary-blue text-primary-blue">
-                  Tap to Retry
+              <div className="space-y-3">
+                <p className="font-sans text-sm font-medium text-warning-amber">No QR Code Detected</p>
+                <Button onClick={handleRetry} className="bg-primary-blue hover:bg-primary-blue/90 text-white text-xs px-4 py-2 rounded-xl">
+                  Try Again
                 </Button>
               </div>
             )}
             {phase === 'permission-denied' && (
-              <div className="space-y-3">
-                <p className="font-sans text-sm font-medium text-danger-red">Camera Permission Denied</p>
-                <p className="font-sans text-xs text-text-muted">
-                  Please allow camera access in your device settings to scan QR codes.
+              <div className="space-y-2 p-2">
+                <p className="font-sans text-sm font-bold text-danger-red">Camera Permission Required</p>
+                <p className="font-sans text-xs text-white/60">
+                  Please enable Camera permissions in your Android Settings to scan QR codes.
                 </p>
               </div>
             )}
             {phase === 'error' && (
-              <div className="space-y-3">
-                <p className="font-sans text-sm font-medium text-danger-red">Camera Unavailable</p>
-                <p className="font-sans text-xs text-text-muted">
-                  Could not access the camera. Please check your device or try again.
-                </p>
-                <Button onClick={handleRetry} variant="outline" className="border-primary-blue text-primary-blue">
+              <div className="space-y-2 p-2">
+                <p className="font-sans text-sm font-bold text-danger-red">Camera Error</p>
+                <p className="font-sans text-xs text-white/60">Could not start camera sensor.</p>
+                <Button onClick={handleRetry} className="bg-primary-blue text-white text-xs px-4 py-2 rounded-xl">
                   Retry
                 </Button>
               </div>
             )}
           </div>
 
-          {/* Hidden gallery input */}
+          {/* Hidden Gallery Input */}
           <input
             ref={galleryInputRef}
             type="file"
@@ -661,25 +827,25 @@ function QRScannerModal({ open, onClose, onScan }: { open: boolean; onClose: () 
             onChange={handleScanFromGallery}
             className="hidden"
           />
-          {/* Hidden temp container for gallery scan */}
           <div id="seycure-qr-gallery-temp" className="hidden" />
 
-          {/* Bottom action bar */}
-          <div className="flex items-center justify-center gap-6 mt-4">
+          {/* Bottom Action Buttons */}
+          <div className="flex items-center justify-center gap-4 mt-5 w-full">
             <button
               onClick={() => galleryInputRef.current?.click()}
-              className="flex items-center gap-2 font-sans text-xs text-primary-blue hover:text-primary-blue/80 transition-colors px-3 py-2 border border-primary-blue/30 rounded-lg dark:hover:bg-white/5 hover:bg-black/5"
+              className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-white/10 hover:bg-white/15 text-white font-sans text-xs font-semibold rounded-xl border border-white/10 transition-colors"
             >
-              <ImageIcon className="w-4 h-4" />
+              <ImageIcon className="w-4 h-4 text-cyan-400" />
               From Gallery
             </button>
             <button
               onClick={handleClose}
-              className="font-sans text-xs text-text-muted hover:text-text-primary dark:hover:text-white transition-colors px-3 py-2"
+              className="py-2.5 px-5 bg-white/5 hover:bg-white/10 text-white/60 hover:text-white font-sans text-xs font-medium rounded-xl transition-colors"
             >
               Cancel
             </button>
           </div>
+
         </div>
       </DialogContent>
     </Dialog>
@@ -717,7 +883,7 @@ function BrowserModal({ url, open, onClose }: { url: string; open: boolean; onCl
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl h-[90vh] bg-white border-border p-0 overflow-hidden flex flex-col">
+      <DialogContent className="max-w-4xl h-[90vh] bg-white dark:bg-bg-card border-border p-0 overflow-hidden flex flex-col">
         {/* Chrome bar */}
         <div className="flex items-center gap-3 px-4 py-3 bg-bg-light border-b border-border-light">
           {/* Traffic lights */}
@@ -730,7 +896,7 @@ function BrowserModal({ url, open, onClose }: { url: string; open: boolean; onCl
           </div>
 
           {/* Address bar */}
-          <div className="flex-1 flex items-center gap-2 bg-white rounded-lg px-3 py-1.5 border border-border-light">
+          <div className="flex-1 flex items-center gap-2 bg-white dark:bg-bg-card rounded-lg px-3 py-1.5 border border-border-light">
             <span className="text-primary-blue/60 font-mono text-xs">https://</span>
             <span className="text-primary-blue font-mono text-xs">{domain}</span>
             <span className="text-text-muted font-mono text-xs truncate">{url.split(domain)[1] || ''}</span>
@@ -758,9 +924,9 @@ function BrowserModal({ url, open, onClose }: { url: string; open: boolean; onCl
         </div>
 
         {/* Content viewport */}
-        <div className="flex-1 relative overflow-hidden bg-white">
+        <div className="flex-1 relative overflow-hidden bg-white dark:bg-bg-card">
           {!loaded ? (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-white z-10">
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-white dark:bg-bg-card z-10">
               <div className="relative w-12 h-12 mb-4">
                 <div className="absolute inset-0 border-2 border-primary-blue/30 rounded-full" />
                 <div className="absolute inset-0 border-2 border-t-primary-blue rounded-full animate-spin-slow" />
@@ -1003,7 +1169,7 @@ function PreviewCard({ analysis, onDismiss }: { analysis: LinkAnalysis; onDismis
       return (
         <button
           onClick={onDismiss}
-          className="w-full py-3 px-4 bg-bg-light text-text-primary border border-border-light font-sans text-sm font-medium rounded-lg hover:bg-gray-100 transition-colors flex items-center justify-center gap-2"
+          className="w-full py-3 px-4 bg-bg-light text-text-primary border border-border-light font-sans text-sm font-medium rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 transition-colors flex items-center justify-center gap-2"
         >
           <X className="w-4 h-4" />
           Don't Open — Go Back
@@ -1041,7 +1207,7 @@ function PreviewCard({ analysis, onDismiss }: { analysis: LinkAnalysis; onDismis
         {analysis.trackersRemoved > 0 && (
           <button
             onClick={() => handleOpenLink(analysis.originalUrl)}
-            className="flex-1 py-3 px-4 bg-bg-light text-text-primary border border-border-light font-sans text-sm font-medium rounded-lg hover:bg-gray-100 transition-colors flex items-center justify-center gap-2"
+            className="flex-1 py-3 px-4 bg-bg-light text-text-primary border border-border-light font-sans text-sm font-medium rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 transition-colors flex items-center justify-center gap-2"
           >
             Open Original
           </button>
@@ -1059,7 +1225,7 @@ function PreviewCard({ analysis, onDismiss }: { analysis: LinkAnalysis; onDismis
 
   return (
     <>
-      <div className="animate-fadeUp bg-white rounded-xl border border-border-light shadow-card overflow-hidden">
+      <div className="animate-fadeUp bg-white dark:bg-bg-card rounded-xl border border-border-light shadow-card overflow-hidden">
         {/* Layer 1: Header */}
         <div className="flex items-center justify-between px-4 py-3 bg-bg-light border-b border-border-light">
           <span className="font-sans text-xs font-medium text-text-secondary tracking-wide uppercase">Link Analysis</span>
@@ -1265,7 +1431,7 @@ function PreviewCard({ analysis, onDismiss }: { analysis: LinkAnalysis; onDismis
                         </div>
                         <div className="min-w-0 flex-1">
                           <p className="font-mono text-[10px] text-text-secondary truncate">{getDomainFromUrl(hop.url) || hop.url}</p>
-                          <p className="font-sans text-[10px] bg-white border border-border-light px-1.5 py-0.5 rounded w-fit text-text-muted mt-0.5">HTTP {hop.status}</p>
+                          <p className="font-sans text-[10px] bg-white dark:bg-bg-card border border-border-light px-1.5 py-0.5 rounded w-fit text-text-muted mt-0.5">HTTP {hop.status}</p>
                         </div>
                       </div>
                     ))}
@@ -1380,7 +1546,7 @@ function PreviewCard({ analysis, onDismiss }: { analysis: LinkAnalysis; onDismis
 
       {/* Warning Category Modal */}
       <Dialog open={showWarningModal} onOpenChange={setShowWarningModal}>
-        <DialogContent className="max-w-sm rounded-[24px] p-6 bg-white gap-0 border-0 shadow-model text-center">
+        <DialogContent className="max-w-sm rounded-[24px] p-6 bg-white dark:bg-bg-card gap-0 border-0 shadow-model text-center">
           <div className="mx-auto w-16 h-16 bg-bg-light rounded-full flex items-center justify-center text-3xl mb-4 border border-border-light shadow-sm">
             {analysis.category.icon}
           </div>
@@ -1481,12 +1647,24 @@ function PreviewCard({ analysis, onDismiss }: { analysis: LinkAnalysis; onDismis
   );
 }
 
-function LinkShield() {
-  const [url, setUrl] = useState('');
+function LinkShield({ initialUrl }: { initialUrl?: string } = {}) {
+  const [url, setUrl] = useState(initialUrl || '');
   const [showScanner, setShowScanner] = useState(false);
   const [analysis, setAnalysis] = useState<LinkAnalysis | null>(null);
   const [isScanning, setIsScanning] = useState(false);
   const { incrementLinksCleaned, incrementTrackersRemoved } = useAppStats();
+
+  const handlePasteClipboard = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text) {
+        setUrl(text);
+        if (isValidUrl(text)) {
+          analyzeUrl(text);
+        }
+      }
+    } catch {}
+  };
 
   const analyzeUrl = useCallback((value: string) => {
     if (isValidUrl(value)) {
@@ -1586,6 +1764,13 @@ function LinkShield() {
     }
   }, []);
 
+  useEffect(() => {
+    if (initialUrl && isValidUrl(initialUrl)) {
+      setUrl(initialUrl);
+      analyzeUrl(initialUrl);
+    }
+  }, [initialUrl, analyzeUrl]);
+
   const handleQRScan = (scannedUrl: string) => {
     setUrl(scannedUrl);
     analyzeUrl(scannedUrl);
@@ -1593,25 +1778,7 @@ function LinkShield() {
 
   return (
     <div className="space-y-4 p-4">
-      {/* QR Scanner Button */}
-      <button
-        onClick={() => setShowScanner(true)}
-        className="w-full py-6 px-4 bg-white border-2 border-dashed border-primary-blue/30 rounded-xl hover:border-primary-blue/60 hover:bg-primary-light/50 transition-all group shadow-card"
-      >
-        <div className="relative">
-          <div className="absolute top-0 left-0 w-4 h-4 border-t-2 border-l-2 border-primary-blue/50" />
-          <div className="absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 border-primary-blue/50" />
-          <div className="absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 border-primary-blue/50" />
-          <div className="absolute bottom-0 right-0 w-4 h-4 border-b-2 border-r-2 border-primary-blue/50" />
-          <div className="flex flex-col items-center gap-2">
-            <Camera className="w-6 h-6 text-primary-blue/70 group-hover:text-primary-blue transition-colors" />
-            <span className="font-sans text-sm font-medium text-primary-blue">Start Camera</span>
-            <span className="font-sans text-xs text-text-secondary">Scan QR code to inspect link</span>
-          </div>
-        </div>
-      </button>
-
-      {/* URL Input & Scan Action */}
+      {/* URL Input, Paste & Scan Action */}
       <div className="flex gap-2">
         <div className="relative flex-1">
           <Input
@@ -1619,7 +1786,7 @@ function LinkShield() {
             onChange={(e) => setUrl(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') analyzeUrl(url); }}
             placeholder="Paste link here to strip tracking..."
-            className="h-12 bg-white border-border-light text-text-primary font-sans placeholder:text-text-muted focus:border-primary-blue focus:ring-primary-blue/20 pr-10 rounded-lg"
+            className="h-12 bg-white dark:bg-bg-card border-border-light text-text-primary font-sans placeholder:text-text-muted focus:border-primary-blue focus:ring-primary-blue/20 pr-10 rounded-lg"
           />
           {url && (
             <button
@@ -1631,9 +1798,18 @@ function LinkShield() {
           )}
         </div>
         <button
+          onClick={handlePasteClipboard}
+          type="button"
+          className="px-3.5 h-12 bg-white dark:bg-bg-card border border-border-light hover:border-primary-blue text-primary-blue font-sans text-xs font-semibold rounded-lg flex items-center gap-1.5 shadow-card shrink-0 transition-colors"
+          title="Paste from clipboard"
+        >
+          <Clipboard className="w-4 h-4" />
+          <span className="hidden sm:inline">Paste</span>
+        </button>
+        <button
           onClick={() => analyzeUrl(url)}
           disabled={!url || !isValidUrl(url) || isScanning}
-          className={`px-6 h-12 text-white font-sans text-sm font-medium rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-card flex items-center gap-2 ${isScanning ? 'bg-emerald-500 animate-pulse' : 'bg-primary-blue hover:bg-primary-blue/90'
+          className={`px-5 h-12 text-white font-sans text-sm font-medium rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-card flex items-center gap-2 ${isScanning ? 'bg-emerald-500 animate-pulse' : 'bg-primary-blue hover:bg-primary-blue/90'
             }`}
         >
           {isScanning ? (
@@ -1647,7 +1823,7 @@ function LinkShield() {
 
       {/* Info note */}
       <p className="font-sans text-xs text-text-secondary text-center">
-        Zero-latency processing — tracker removal fires instantly on valid URL detection
+        Trackers are removed the moment you paste a link.
       </p>
 
       {/* Preview Card */}
@@ -2045,7 +2221,7 @@ function MediaScrubber() {
         onClick={() => fileInputRef.current?.click()}
         className={`w-full py-12 px-4 border-2 border-dashed rounded-xl cursor-pointer transition-all ${isDragging
           ? 'border-primary-blue bg-primary-light'
-          : 'border-border-light bg-white hover:border-primary-blue/50 shadow-card'
+          : 'border-border-light bg-white dark:bg-bg-card hover:border-primary-blue/50 shadow-card'
           }`}
       >
         <input
@@ -2070,7 +2246,7 @@ function MediaScrubber() {
         {files.map(file => (
           <div
             key={file.id}
-            className="bg-white border border-border-light rounded-xl p-4 animate-fadeUp shadow-card"
+            className="bg-white dark:bg-bg-card border border-border-light rounded-xl p-4 animate-fadeUp shadow-card"
           >
             <div className="flex items-center gap-3">
               <div className={`w-2 h-2 rounded-full ${file.status === 'scanning'
@@ -2149,6 +2325,7 @@ function ScreenshotPrivacyGuard() {
   const [enabledIds, setEnabledIds] = useState<Set<string>>(new Set());
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { shareFile } = useNativeShare();
+  const { incrementScreenshotsProtected } = useAppStats();
 
   const enabledCount = enabledIds.size;
   const allEnabled = findings.length > 0 && enabledCount === findings.length;
@@ -2180,7 +2357,8 @@ function ScreenshotPrivacyGuard() {
   const handleDirectShare = useCallback(async () => {
     if (!imageBase64) return;
     await shareFile('seycure_screenshot.png', imageBase64, 'image/png', 'Share screenshot');
-  }, [imageBase64, shareFile]);
+    await incrementScreenshotsProtected();
+  }, [imageBase64, shareFile, incrementScreenshotsProtected]);
 
   // ── Direct save (no blur needed) ────────────────────────────────────────
   const handleDirectSave = useCallback(async () => {
@@ -2194,6 +2372,7 @@ function ScreenshotPrivacyGuard() {
         directory: Directory.ExternalStorage,
         recursive: true,
       });
+      await incrementScreenshotsProtected();
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch (error) {
@@ -2203,12 +2382,13 @@ function ScreenshotPrivacyGuard() {
       link.download = `seycure_clean_${Date.now()}.png`;
       link.href = `data:image/png;base64,${imageBase64}`;
       link.click();
+      await incrementScreenshotsProtected();
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } finally {
       setSaving(false);
     }
-  }, [imageBase64]);
+  }, [imageBase64, incrementScreenshotsProtected]);
 
   const runScan = useCallback(async (base64: string) => {
     setScanning(true);
@@ -2260,10 +2440,10 @@ function ScreenshotPrivacyGuard() {
 
   const getSeverityStyle = (severity: string) => {
     switch (severity) {
-      case 'critical': return 'bg-red-500/10 text-red-600 border-red-200';
-      case 'high': return 'bg-amber-500/10 text-amber-600 border-amber-200';
-      case 'medium': return 'bg-blue-500/10 text-blue-600 border-blue-200';
-      default: return 'bg-gray-500/10 text-gray-600 border-gray-200';
+      case 'critical': return 'bg-red-500/10 text-red-600 dark:text-red-400 border-red-200 dark:border-red-500/30';
+      case 'high': return 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-200 dark:border-amber-500/30';
+      case 'medium': return 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-500/30';
+      default: return 'bg-gray-500/10 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-white/15';
     }
   };
 
@@ -2283,8 +2463,8 @@ function ScreenshotPrivacyGuard() {
         className={`w-full py-8 px-4 border-2 border-dashed rounded-xl cursor-pointer transition-all ${isDragging
           ? 'border-primary-blue bg-primary-light/50'
           : imageBase64
-            ? 'border-green-300 bg-green-50'
-            : 'border-primary-blue/30 hover:border-primary-blue/60 bg-white'
+            ? 'border-green-300 dark:border-green-500/40 bg-green-50 dark:bg-green-500/10'
+            : 'border-primary-blue/30 hover:border-primary-blue/60 bg-white dark:bg-bg-card'
           }`}
       >
         {imageBase64 ? (
@@ -2361,13 +2541,13 @@ function ScreenshotPrivacyGuard() {
                 key={f.id}
                 onClick={() => toggleFinding(f.id)}
                 aria-pressed={on}
-                className={`w-full text-left px-4 py-3 rounded-xl border transition-all animate-fadeUp ${on ? getSeverityStyle(f.severity) : 'bg-white text-text-secondary border-border-light'
+                className={`w-full text-left px-4 py-3 rounded-xl border transition-all animate-fadeUp ${on ? getSeverityStyle(f.severity) : 'bg-white dark:bg-bg-card text-text-secondary border-border-light'
                   }`}
                 style={{ animationDelay: `${i * 80}ms` }}
               >
                 <div className="flex items-start gap-3">
                   <span
-                    className={`mt-0.5 w-5 h-5 flex-shrink-0 rounded-md border flex items-center justify-center transition-colors ${on ? 'bg-primary-blue border-primary-blue' : 'bg-white border-border-light'
+                    className={`mt-0.5 w-5 h-5 flex-shrink-0 rounded-md border flex items-center justify-center transition-colors ${on ? 'bg-primary-blue border-primary-blue' : 'bg-white dark:bg-bg-card border-border-light'
                       }`}
                   >
                     {on && <Check className="w-3.5 h-3.5 text-white" />}
@@ -2397,11 +2577,11 @@ function ScreenshotPrivacyGuard() {
           {findings.length === 0 && (
             <>
               {/* Clean status card */}
-              <div className="bg-green-50 border border-green-200 rounded-xl p-4 flex items-start gap-3 animate-fadeUp">
-                <ShieldCheck className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
+              <div className="bg-green-50 dark:bg-green-500/10 border border-green-200 dark:border-green-500/30 rounded-xl p-4 flex items-start gap-3 animate-fadeUp">
+                <ShieldCheck className="w-5 h-5 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
                 <div>
-                  <p className="font-sans text-sm font-semibold text-green-700">Your screenshot looks clean!</p>
-                  <p className="font-sans text-xs text-green-600 mt-1">No sensitive data was found. You can still preview and add manual blur if needed.</p>
+                  <p className="font-sans text-sm font-semibold text-green-700 dark:text-green-300">Your screenshot looks clean!</p>
+                  <p className="font-sans text-xs text-green-600 dark:text-green-400 mt-1">No sensitive data was found. You can still preview and add manual blur if needed.</p>
                 </div>
               </div>
 
@@ -2459,11 +2639,6 @@ function ScreenshotPrivacyGuard() {
           appContext={appContext}
         />
       )}
-
-      {/* Learned Rules Settings */}
-      <div className="mt-4">
-        <LearnedRulesSettings />
-      </div>
     </div>
   );
 }
@@ -2477,7 +2652,7 @@ function SplashScreen({ onComplete }: { onComplete: () => void }) {
   }, [onComplete]);
 
   return (
-    <div className="fixed inset-0 z-[9999] bg-white flex flex-col items-center justify-center animate-splash-fade pointer-events-none">
+    <div className="fixed inset-0 z-[9999] bg-white dark:bg-bg-light flex flex-col items-center justify-center animate-splash-fade pointer-events-none">
       <div className="animate-text-scale">
         <div className="flex flex-col items-center gap-4">
           <img src="/logo.png" alt="Seycure Logo" className="w-24 h-24 object-contain shadow-2xl rounded-2xl" />
@@ -2491,144 +2666,427 @@ function SplashScreen({ onComplete }: { onComplete: () => void }) {
   );
 }
 
-function StatsDashboard() {
+function ProtectedItemsCounter({ onOpenStats }: { onOpenStats: () => void }) {
   const { stats } = useAppStats();
-  const { shareText } = useNativeShare();
-
-  const handleShareScore = async () => {
-    const text = `🏆 My Seycure Privacy Score:\n\n🛡️ Links Cleaned: ${stats.linksCleaned}\n📸 Photos Scrubbed: ${stats.photosScrubbed}\n🚫 Trackers Blocked: ${stats.trackersRemoved}\n\nProtect your data too! Get Seycure here: https://play.google.com/store/apps/details?id=com.arkqube.clrlink`;
-    await shareText(text, 'Share Privacy Score');
-  };
+  const count = stats.screenshotsProtected || 0;
+  const label = count === 1 ? 'screenshot protected' : 'screenshots protected';
+  const hasProtectedItems = count > 0 || (stats.photosScrubbed || 0) > 0 || (stats.linksCleaned || 0) > 0 || (stats.trackersRemoved || 0) > 0;
+  const hasSecondaryStats = (stats.photosScrubbed || 0) > 0 || (stats.linksCleaned || 0) > 0 || (stats.trackersRemoved || 0) > 0;
 
   return (
-    <div className="p-4 space-y-4 animate-fadeUp">
-      <div className="bg-gradient-to-br from-primary-blue to-accent-blue rounded-2xl p-6 text-white shadow-card relative overflow-hidden">
-        <div className="relative z-10">
-          <div className="flex justify-between items-start mb-6">
-            <div>
-              <h2 className="font-sans text-2xl font-bold tracking-tight">Privacy Score</h2>
-              <p className="font-sans text-sm text-white/80 mt-1">Your lifetime digital footprint reduction</p>
-            </div>
-            <Trophy className="w-8 h-8 text-warning-amber drop-shadow-md" />
+    <div className="relative overflow-hidden bg-white dark:bg-[#161a23] border border-border-light dark:border-white/10 rounded-2xl p-5 shadow-card animate-fadeUp">
+      {/* Top row: Shield Icon + Counter Title + (Conditional Trophy when items protected) */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3.5">
+          <div className="w-12 h-12 rounded-2xl bg-primary-blue/10 dark:bg-primary-blue/20 text-primary-blue dark:text-accent-blue flex items-center justify-center shrink-0 border border-primary-blue/20 shadow-sm">
+            <ShieldCheck className="w-6 h-6" />
           </div>
-          
-          <div className="grid grid-cols-3 gap-4 mb-6">
-            <div className="bg-white/10 rounded-xl p-3 backdrop-blur-sm border border-white/20 text-center">
-              <span className="block font-sans text-2xl font-bold">{stats.trackersRemoved}</span>
-              <span className="block font-sans text-xs text-white/80 mt-1 uppercase tracking-wider">Trackers<br/>Blocked</span>
+          <div>
+            <div className="flex items-baseline gap-1.5">
+              <span className="font-sans text-2xl font-extrabold tracking-tight text-text-primary dark:text-white">
+                {count}
+              </span>
+              <span className="font-sans text-sm font-bold text-text-secondary dark:text-text-muted">
+                {label}
+              </span>
             </div>
-            <div className="bg-white/10 rounded-xl p-3 backdrop-blur-sm border border-white/20 text-center">
-              <span className="block font-sans text-2xl font-bold">{stats.photosScrubbed}</span>
-              <span className="block font-sans text-xs text-white/80 mt-1 uppercase tracking-wider">Photos<br/>Scrubbed</span>
-            </div>
-            <div className="bg-white/10 rounded-xl p-3 backdrop-blur-sm border border-white/20 text-center">
-              <span className="block font-sans text-2xl font-bold">{stats.linksCleaned}</span>
-              <span className="block font-sans text-xs text-white/80 mt-1 uppercase tracking-wider">Links<br/>Cleaned</span>
-            </div>
+            <p className="text-xs text-text-secondary dark:text-text-muted mt-1 font-medium">
+              {count > 0 
+                ? 'Protected on this device • Zero data leaves phone' 
+                : 'Screenshots blurred will appear here.'}
+            </p>
           </div>
-          
-          <button 
-            onClick={handleShareScore}
-            className="w-full bg-white text-primary-blue font-sans text-sm font-bold py-3 rounded-xl hover:bg-white/90 transition-colors flex items-center justify-center gap-2 shadow-sm"
-          >
-            <Share2 className="w-4 h-4" />
-            Share My Score
-          </button>
         </div>
-        
-        {/* Background decorative elements */}
-        <div className="absolute -top-12 -right-12 w-32 h-32 bg-white/10 rounded-full blur-2xl" />
-        <div className="absolute -bottom-8 -left-8 w-24 h-24 bg-accent-blue/30 rounded-full blur-xl" />
+
+        {/* Drop the trophy until the user has actually protected something */}
+        {hasProtectedItems && (
+          <button
+            onClick={onOpenStats}
+            className="p-2.5 rounded-xl bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 text-text-secondary dark:text-text-muted hover:text-text-primary dark:hover:text-white transition-colors"
+            title="View Privacy Score"
+          >
+            <Trophy className="w-4 h-4 text-warning-amber" />
+          </button>
+        )}
       </div>
 
-      {/* Info note */}
-      <p className="font-sans text-xs text-text-secondary text-center px-4">
-        Seycure runs entirely on your device. Your data and stats are never sent to any server.
-      </p>
+      {/* Hide the three-stat row entirely until at least one value is non-zero */}
+      {hasSecondaryStats && (
+        <div className="grid grid-cols-3 gap-2 mt-4 pt-3.5 border-t border-border-light/60 dark:border-white/5">
+          <div className="p-2.5 rounded-xl bg-black/[0.02] dark:bg-white/[0.03] text-center">
+            <span className="block font-sans text-sm font-bold text-text-primary dark:text-white">
+              {stats.photosScrubbed || 0}
+            </span>
+            <span className="block text-xs font-medium text-text-secondary dark:text-text-muted mt-0.5">
+              Photos EXIF
+            </span>
+          </div>
+          <div className="p-2.5 rounded-xl bg-black/[0.02] dark:bg-white/[0.03] text-center">
+            <span className="block font-sans text-sm font-bold text-text-primary dark:text-white">
+              {stats.linksCleaned || 0}
+            </span>
+            <span className="block text-xs font-medium text-text-secondary dark:text-text-muted mt-0.5">
+              Clean Links
+            </span>
+          </div>
+          <div className="p-2.5 rounded-xl bg-black/[0.02] dark:bg-white/[0.03] text-center">
+            <span className="block font-sans text-sm font-bold text-text-primary dark:text-white">
+              {stats.trackersRemoved || 0}
+            </span>
+            <span className="block text-xs font-medium text-text-secondary dark:text-text-muted mt-0.5">
+              Trackers Cut
+            </span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function App() {
-  // Privacy Blur is the product, so it is what the app opens into.
-  const [mode, setMode] = useState<AppMode>('privacy-blur');
-  const [status] = useState<'idle' | 'scanning'>('idle');
-  const [showSplash, setShowSplash] = useState(true);
-  
-  // Swipe navigation state
-  const touchStartX = useRef<number | null>(null);
-  const touchStartY = useRef<number | null>(null);
+function SettingsScreen({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [expandedSection, setExpandedSection] = useState<string | null>(null);
+  const { stats } = useAppStats();
+  const { shareText } = useNativeShare();
 
-  const handleTouchStart = (e: React.TouchEvent) => {
-    // Ignore swipe if touching inside a modal/dialog (like Blur Editor)
-    if ((e.target as HTMLElement).closest('[role="dialog"], [role="alertdialog"]')) {
-      return;
-    }
-    touchStartX.current = e.touches[0].clientX;
-    touchStartY.current = e.touches[0].clientY;
+  const toggleSection = (section: string) => {
+    setExpandedSection(prev => prev === section ? null : section);
   };
 
-  const handleTouchEnd = (e: React.TouchEvent) => {
-    if (touchStartX.current === null || touchStartY.current === null) return;
-    
-    // Check again just to be safe
-    if ((e.target as HTMLElement).closest('[role="dialog"], [role="alertdialog"]')) {
-      touchStartX.current = null;
-      touchStartY.current = null;
-      return;
-    }
-    
-    const touchEndX = e.changedTouches[0].clientX;
-    const touchEndY = e.changedTouches[0].clientY;
-    
-    const deltaX = touchStartX.current - touchEndX;
-    const deltaY = touchStartY.current - touchEndY;
-    
-    // Check if swipe is mostly horizontal and > 50px
-    if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > 50) {
-      const index = TABS.findIndex(t => t.id === mode);
-      const next = deltaX > 0 ? index + 1 : index - 1;
-      if (index !== -1 && next >= 0 && next < TABS.length) {
-        setMode(TABS[next].id);
-      }
-    }
-    
-    touchStartX.current = null;
-    touchStartY.current = null;
-  };
+  const hasAnyStats = (stats.screenshotsProtected || 0) > 0 || (stats.photosScrubbed || 0) > 0 || (stats.linksCleaned || 0) > 0 || (stats.trackersRemoved || 0) > 0;
 
-  const renderContent = () => {
-    switch (mode) {
-      case 'privacy-blur':
-        return <ScreenshotPrivacyGuard />;
-      case 'media-scrubber':
-        return <MediaScrubber />;
-      case 'link-shield':
-        return <LinkShield />;
-      case 'dashboard':
-        return <StatsDashboard />;
-      default:
-        return <ScreenshotPrivacyGuard />;
-    }
+  const handleShare = async () => {
+    const text = `My Seycure Privacy Score:\n\n🛡️ Screenshots Protected: ${stats.screenshotsProtected || 0}\n📸 Photos Scrubbed: ${stats.photosScrubbed || 0}\n🔗 Links Cleaned: ${stats.linksCleaned || 0}\n🚫 Trackers Blocked: ${stats.trackersRemoved || 0}\n\nProtect your data too! Get Seycure: https://play.google.com/store/apps/details?id=com.arkqube.clrlink`;
+    await shareText(text, 'Share Privacy Score');
   };
 
   return (
-    <div 
-      className="min-h-screen bg-bg-light"
-      onTouchStart={handleTouchStart}
-      onTouchEnd={handleTouchEnd}
-    >
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto bg-white dark:bg-[#121620] text-text-primary dark:text-white border border-border-light dark:border-white/10 rounded-3xl p-6 shadow-2xl">
+        <div className="flex items-center justify-between pb-3 border-b border-border-light dark:border-white/10">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-black/5 dark:bg-white/10 text-text-secondary dark:text-text-muted flex items-center justify-center">
+              <SettingsIcon className="w-5 h-5" />
+            </div>
+            <h3 className="font-sans text-base font-bold">Settings</h3>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg text-text-secondary hover:text-text-primary dark:hover:text-white">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="py-3 space-y-1.5">
+          {/* Section 1: Privacy */}
+          <div className="rounded-2xl border border-border-light dark:border-white/10 overflow-hidden">
+            <button
+              onClick={() => toggleSection('privacy')}
+              className="w-full flex items-center gap-3.5 p-3 hover:bg-black/5 dark:hover:bg-white/5 transition-colors text-left"
+            >
+              <div className="w-9 h-9 rounded-xl bg-black/5 dark:bg-white/10 text-text-secondary dark:text-text-muted flex items-center justify-center shrink-0">
+                <ShieldCheck className="w-5 h-5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-sans text-sm font-semibold">Privacy</p>
+                <p className="text-xs text-text-muted">How your data is handled</p>
+              </div>
+              <ChevronRight className={`w-4 h-4 text-text-muted transition-transform ${expandedSection === 'privacy' ? 'rotate-90' : ''}`} />
+            </button>
+            {expandedSection === 'privacy' && (
+              <div className="px-4 pb-4 pt-1 border-t border-border-light/60 dark:border-white/5">
+                <p className="text-xs text-text-secondary dark:text-text-muted leading-relaxed">
+                  Your files never leave your phone. Seycure doesn't upload, store, or share images, documents, or links — everything runs on your device. The only things saved are your redaction rules and a count of files you've protected.
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Section 2: Learned Rules */}
+          <div className="rounded-2xl border border-border-light dark:border-white/10 overflow-hidden">
+            <button
+              onClick={() => toggleSection('rules')}
+              className="w-full flex items-center gap-3.5 p-3 hover:bg-black/5 dark:hover:bg-white/5 transition-colors text-left"
+            >
+              <div className="w-9 h-9 rounded-xl bg-black/5 dark:bg-white/10 text-text-secondary dark:text-text-muted flex items-center justify-center shrink-0">
+                <Sliders className="w-5 h-5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-sans text-sm font-semibold">Learned rules</p>
+                <p className="text-xs text-text-muted">Manage automated redaction rules</p>
+              </div>
+              <ChevronRight className={`w-4 h-4 text-text-muted transition-transform ${expandedSection === 'rules' ? 'rotate-90' : ''}`} />
+            </button>
+            {expandedSection === 'rules' && (
+              <div className="px-4 pb-4 pt-1 border-t border-border-light/60 dark:border-white/5">
+                <LearnedRulesSettings />
+              </div>
+            )}
+          </div>
+
+          {/* Section 3: Stats */}
+          <div className="rounded-2xl border border-border-light dark:border-white/10 overflow-hidden">
+            <button
+              onClick={() => toggleSection('stats')}
+              className="w-full flex items-center gap-3.5 p-3 hover:bg-black/5 dark:hover:bg-white/5 transition-colors text-left"
+            >
+              <div className="w-9 h-9 rounded-xl bg-black/5 dark:bg-white/10 text-text-secondary dark:text-text-muted flex items-center justify-center shrink-0">
+                <Zap className="w-5 h-5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-sans text-sm font-semibold">Stats</p>
+                <p className="text-xs text-text-muted">Your privacy activity</p>
+              </div>
+              <ChevronRight className={`w-4 h-4 text-text-muted transition-transform ${expandedSection === 'stats' ? 'rotate-90' : ''}`} />
+            </button>
+            {expandedSection === 'stats' && (
+              <div className="px-4 pb-4 pt-1 border-t border-border-light/60 dark:border-white/5">
+                {hasAnyStats ? (
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="p-2.5 rounded-xl bg-black/[0.03] dark:bg-white/[0.05] text-center">
+                        <span className="block font-sans text-lg font-bold text-text-primary dark:text-white">{stats.screenshotsProtected || 0}</span>
+                        <span className="block text-xs text-text-secondary dark:text-text-muted mt-0.5">Screenshots</span>
+                      </div>
+                      <div className="p-2.5 rounded-xl bg-black/[0.03] dark:bg-white/[0.05] text-center">
+                        <span className="block font-sans text-lg font-bold text-text-primary dark:text-white">{stats.photosScrubbed || 0}</span>
+                        <span className="block text-xs text-text-secondary dark:text-text-muted mt-0.5">Photos</span>
+                      </div>
+                      <div className="p-2.5 rounded-xl bg-black/[0.03] dark:bg-white/[0.05] text-center">
+                        <span className="block font-sans text-lg font-bold text-text-primary dark:text-white">{stats.linksCleaned || 0}</span>
+                        <span className="block text-xs text-text-secondary dark:text-text-muted mt-0.5">Links</span>
+                      </div>
+                      <div className="p-2.5 rounded-xl bg-black/[0.03] dark:bg-white/[0.05] text-center">
+                        <span className="block font-sans text-lg font-bold text-text-primary dark:text-white">{stats.trackersRemoved || 0}</span>
+                        <span className="block text-xs text-text-secondary dark:text-text-muted mt-0.5">Trackers</span>
+                      </div>
+                    </div>
+                    <button
+                      onClick={handleShare}
+                      className="w-full py-2.5 bg-primary-blue text-white font-sans text-xs font-bold rounded-xl hover:bg-primary-blue/90 transition-colors flex items-center justify-center gap-2"
+                    >
+                      <Share2 className="w-3.5 h-3.5" />
+                      Share
+                    </button>
+                  </div>
+                ) : (
+                  <p className="text-xs text-text-muted text-center py-3">
+                    No activity yet. Stats will appear once you protect a file.
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Section 4: About */}
+          <div className="rounded-2xl border border-border-light dark:border-white/10 overflow-hidden">
+            <button
+              onClick={() => toggleSection('about')}
+              className="w-full flex items-center gap-3.5 p-3 hover:bg-black/5 dark:hover:bg-white/5 transition-colors text-left"
+            >
+              <div className="w-9 h-9 rounded-xl bg-black/5 dark:bg-white/10 text-text-secondary dark:text-text-muted flex items-center justify-center shrink-0">
+                <Smartphone className="w-5 h-5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-sans text-sm font-semibold">About</p>
+                <p className="text-xs text-text-muted">Version and app info</p>
+              </div>
+              <ChevronRight className={`w-4 h-4 text-text-muted transition-transform ${expandedSection === 'about' ? 'rotate-90' : ''}`} />
+            </button>
+            {expandedSection === 'about' && (
+              <div className="px-4 pb-4 pt-1 border-t border-border-light/60 dark:border-white/5 space-y-2">
+                <div className="flex items-center justify-between p-2.5 rounded-xl bg-black/[0.03] dark:bg-white/[0.05]">
+                  <span className="text-xs font-semibold">Version</span>
+                  <span className="text-xs font-mono text-text-secondary">v1.0</span>
+                </div>
+                <div className="flex items-center justify-between p-2.5 rounded-xl bg-black/[0.03] dark:bg-white/[0.05]">
+                  <span className="text-xs font-semibold">Processing</span>
+                  <span className="text-xs text-emerald-500 font-semibold flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                    Offline
+                  </span>
+                </div>
+                <p className="text-xs text-text-muted text-center pt-1">Seycure Privacy Suite by ArkQube</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <button
+          onClick={onClose}
+          className="w-full py-3 bg-primary-blue text-white font-sans text-xs font-bold rounded-xl hover:bg-primary-blue/90 transition-colors shadow-sm mt-1"
+        >
+          Got it
+        </button>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+
+
+
+function App() {
+  const [showSplash, setShowSplash] = useState(true);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showScannerModal, setShowScannerModal] = useState(false);
+
+  // Active Tool display on single page
+  // Opens on the blur tool so the picker is one tap away, not two.
+  const [activeTool, setActiveTool] = useState<'none' | 'metadata' | 'link' | 'blur'>('blur');
+  const [initialScannedUrl, setInitialScannedUrl] = useState<string>('');
+
+  const handleQRScanResult = (scannedUrl: string) => {
+    setInitialScannedUrl(scannedUrl);
+    setActiveTool('link');
+  };
+
+  return (
+    <div className="min-h-screen bg-bg-light dark:bg-[#0c1017] text-text-primary dark:text-white">
       {showSplash && <SplashScreen onComplete={() => setShowSplash(false)} />}
 
-      <div className="max-w-app mx-auto">
-        <TopBar status={status} />
-        <TabBar mode={mode} onChange={setMode} />
+      <div className="max-w-app mx-auto min-h-screen flex flex-col">
+        <TopBar onOpenMenu={() => setShowSettings(true)} />
 
-        <main className="pb-8 overflow-hidden">
-          <div className="animate-fadeUp transition-transform duration-300">
-            {renderContent()}
+        <main className="flex-1 p-4 space-y-4">
+          {/* 1. HERO CARD ("Blur a screenshot") matching Image 1 */}
+          <div
+            onClick={() => setActiveTool(prev => prev === 'blur' ? 'none' : 'blur')}
+            className={`relative group cursor-pointer overflow-hidden rounded-2xl border p-7 text-center transition-all active:scale-[0.99] shadow-lg ${
+              activeTool === 'blur'
+                ? 'bg-gradient-to-br from-[#0c2340] to-[#12335c] border-primary-blue shadow-glow'
+                : 'bg-gradient-to-br from-[#0c2340] to-[#08172c] border-blue-500/30 hover:border-blue-400/60'
+            }`}
+          >
+            <div className="relative z-10 flex flex-col items-center">
+              <div className="w-16 h-16 rounded-2xl bg-primary-blue/20 border border-primary-blue/40 flex items-center justify-center mb-3.5 text-primary-blue shadow-glow group-hover:scale-105 transition-transform">
+                <div className="relative">
+                  <ImageIcon className="w-8 h-8 text-accent-blue" />
+                  <Shield className="w-4 h-4 text-white absolute -bottom-1 -right-1 fill-primary-blue" />
+                </div>
+              </div>
+              <h2 className="font-sans text-xl sm:text-2xl font-bold text-white tracking-tight">
+                Blur a screenshot
+              </h2>
+              <p className="font-sans text-sm text-accent-blue/80 mt-1 font-medium">
+                Finds emails, phones, IDs
+              </p>
+            </div>
+            <div className="absolute -top-12 -right-12 w-32 h-32 bg-primary-blue/20 rounded-full blur-2xl pointer-events-none" />
           </div>
+
+          {/* 2. Subtext "Nothing leaves your device" matching Image 1 */}
+          <div className="flex items-center justify-center gap-1.5 py-0.5 text-xs text-text-secondary dark:text-text-muted font-medium">
+            <Lock className="w-3.5 h-3.5 text-emerald-500" />
+            <span>Nothing leaves your device</span>
+          </div>
+
+          {/* 3. Three-Tool Grid matching Image 1 */}
+          <div className="grid grid-cols-3 gap-3">
+            {/* Metadata Tool */}
+            <button
+              onClick={() => setActiveTool(prev => prev === 'metadata' ? 'none' : 'metadata')}
+              className={`flex flex-col items-center justify-center p-4 rounded-xl border transition-all active:scale-[0.98] shadow-card ${
+                activeTool === 'metadata'
+                  ? 'bg-primary-blue text-white border-primary-blue shadow-glow'
+                  : 'bg-white dark:bg-[#161a23] border-border-light dark:border-white/10 hover:border-primary-blue/40 text-text-primary dark:text-white'
+              }`}
+            >
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center mb-1.5 transition-transform group-hover:scale-110 ${
+                activeTool === 'metadata' ? 'bg-white/20 text-white' : 'bg-primary-blue/10 text-primary-blue dark:text-accent-blue'
+              }`}>
+                <FileText className="w-5 h-5" />
+              </div>
+              <span className="font-sans text-xs font-bold">Metadata</span>
+            </button>
+
+            {/* Link Tool */}
+            <button
+              onClick={() => setActiveTool(prev => prev === 'link' ? 'none' : 'link')}
+              className={`flex flex-col items-center justify-center p-4 rounded-xl border transition-all active:scale-[0.98] shadow-card ${
+                activeTool === 'link'
+                  ? 'bg-primary-blue text-white border-primary-blue shadow-glow'
+                  : 'bg-white dark:bg-[#161a23] border-border-light dark:border-white/10 hover:border-primary-blue/40 text-text-primary dark:text-white'
+              }`}
+            >
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center mb-1.5 transition-transform group-hover:scale-110 ${
+                activeTool === 'link' ? 'bg-white/20 text-white' : 'bg-primary-blue/10 text-primary-blue dark:text-accent-blue'
+              }`}>
+                <Link2 className="w-5 h-5" />
+              </div>
+              <span className="font-sans text-xs font-bold">Link</span>
+            </button>
+
+            {/* QR Tool */}
+            <button
+              onClick={() => setShowScannerModal(true)}
+              className="flex flex-col items-center justify-center p-4 rounded-xl bg-white dark:bg-[#161a23] border border-border-light dark:border-white/10 hover:border-primary-blue/40 text-text-primary dark:text-white shadow-card transition-all active:scale-[0.98]"
+            >
+              <div className="w-10 h-10 rounded-xl bg-primary-blue/10 text-primary-blue dark:text-accent-blue flex items-center justify-center mb-1.5 transition-transform group-hover:scale-110">
+                <QrCode className="w-5 h-5" />
+              </div>
+              <span className="font-sans text-xs font-bold">QR</span>
+            </button>
+          </div>
+
+          {/* Active Tool Section (smoothly rendered right here on this single page!) */}
+          <div className="pt-2 animate-fadeUp">
+            {activeTool === 'link' && (
+              <div className="relative bg-white dark:bg-[#161a23] rounded-2xl border border-border-light dark:border-white/10 p-2 shadow-card">
+                <div className="flex items-center justify-between px-3 pt-2 pb-1">
+                  <span className="text-xs font-bold text-text-secondary dark:text-text-muted uppercase tracking-wider">Link Shield & Cleaner</span>
+                  <button onClick={() => setActiveTool('none')} className="text-xs text-text-muted hover:text-text-primary flex items-center gap-1">
+                    <X className="w-3.5 h-3.5" /> Close
+                  </button>
+                </div>
+                <LinkShield initialUrl={initialScannedUrl} />
+              </div>
+            )}
+
+            {activeTool === 'metadata' && (
+              <div className="relative bg-white dark:bg-[#161a23] rounded-2xl border border-border-light dark:border-white/10 p-2 shadow-card">
+                <div className="flex items-center justify-between px-3 pt-2 pb-1">
+                  <span className="text-xs font-bold text-text-secondary dark:text-text-muted uppercase tracking-wider">Metadata Scrubber</span>
+                  <button onClick={() => setActiveTool('none')} className="text-xs text-text-muted hover:text-text-primary flex items-center gap-1">
+                    <X className="w-3.5 h-3.5" /> Close
+                  </button>
+                </div>
+                <MediaScrubber />
+              </div>
+            )}
+
+            {activeTool === 'blur' && (
+              <div className="relative bg-white dark:bg-[#161a23] rounded-2xl border border-border-light dark:border-white/10 p-2 shadow-card">
+                <div className="flex items-center justify-between px-3 pt-2 pb-1">
+                  <span className="text-xs font-bold text-text-secondary dark:text-text-muted uppercase tracking-wider">Screenshot Privacy Guard</span>
+                  <button onClick={() => setActiveTool('none')} className="text-xs text-text-muted hover:text-text-primary flex items-center gap-1">
+                    <X className="w-3.5 h-3.5" /> Close
+                  </button>
+                </div>
+                <ScreenshotPrivacyGuard />
+              </div>
+            )}
+          </div>
+
+          {/* Protected Items Counter (passive stat, fills the space on home screen) */}
+          {activeTool === 'none' && (
+            <div className="pt-1">
+              <ProtectedItemsCounter
+                onOpenStats={() => setShowSettings(true)}
+              />
+            </div>
+          )}
         </main>
+
+        {/* Modals & Dialogs */}
+        <QRScannerModal
+          open={showScannerModal}
+          onClose={() => setShowScannerModal(false)}
+          onScan={handleQRScanResult}
+        />
+
+        <SettingsScreen
+          open={showSettings}
+          onClose={() => setShowSettings(false)}
+        />
+
       </div>
     </div>
   );
