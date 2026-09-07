@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from 'react';
 import { X, Camera, Link2, Image as ImageIcon, ExternalLink, AlertTriangle, Scissors, Check, ChevronRight, Upload, MapPin, Smartphone, Wrench, Download, Share2, Loader2, ArrowRight, Search, Eye, EyeOff, ShieldAlert, ShieldCheck, RefreshCw, FileText, User, Building2, Type, Calendar, ZoomIn, ZoomOut, Trophy } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
 import exifr from 'exifr';
@@ -226,46 +226,35 @@ function TopBar({ status }: { status: 'idle' | 'scanning' }) {
   );
 }
 
+/**
+ * Tab order is the product order: Privacy Blur is the app, the rest are
+ * secondary. It also drives swipe navigation.
+ */
+const TABS: { id: AppMode; label: string; shortLabel: string; icon: ReactNode }[] = [
+  { id: 'privacy-blur', label: 'Privacy Blur', shortLabel: 'Blur', icon: <EyeOff className="w-4 h-4" /> },
+  { id: 'media-scrubber', label: 'Metadata', shortLabel: 'Meta', icon: <Scissors className="w-4 h-4" /> },
+  { id: 'link-shield', label: 'Link / QR', shortLabel: 'Link', icon: <Link2 className="w-4 h-4" /> },
+  { id: 'dashboard', label: 'Stats', shortLabel: 'Stats', icon: <ShieldCheck className="w-4 h-4" /> },
+];
+
 function TabBar({ mode, onChange }: { mode: AppMode; onChange: (m: AppMode) => void }) {
-  const isMediaTab = mode === 'media-scrubber' || mode === 'privacy-blur';
-
   return (
-    <div className="flex justify-center p-4">
+    <div className="flex justify-center px-2 py-4">
       <div className="inline-flex bg-bg-light rounded-xl p-1 shadow-card">
-        <button
-          onClick={() => onChange('link-shield')}
-          className={`px-4 py-2.5 rounded-lg font-sans text-xs sm:text-sm font-medium transition-all duration-150 flex items-center gap-1.5 ${mode === 'link-shield'
-            ? 'bg-primary-blue text-white shadow-glow'
-            : 'text-text-secondary hover:text-text-primary'
-            }`}
-        >
-          <Link2 className="w-4 h-4" />
-          <span className="hidden sm:inline">Link / QR</span>
-          <span className="sm:hidden">Link</span>
-        </button>
-        <button
-          onClick={() => onChange(isMediaTab ? mode : 'media-scrubber')}
-          className={`px-4 py-2.5 rounded-lg font-sans text-xs sm:text-sm font-medium transition-all duration-150 flex items-center gap-1.5 ${isMediaTab
-            ? 'bg-primary-blue text-white shadow-glow'
-            : 'text-text-secondary hover:text-text-primary'
-            }`}
-        >
-          <ImageIcon className="w-4 h-4" />
-          <span className="hidden sm:inline">Media + Blur</span>
-          <span className="sm:hidden">Media</span>
-        </button>
-        <button
-          onClick={() => onChange('dashboard')}
-          className={`px-4 py-2.5 rounded-lg font-sans text-xs sm:text-sm font-medium transition-all duration-150 flex items-center gap-1.5 ${mode === 'dashboard'
-            ? 'bg-primary-blue text-white shadow-glow'
-            : 'text-text-secondary hover:text-text-primary'
-            }`}
-        >
-          <ShieldCheck className="w-4 h-4" />
-          <span className="hidden sm:inline">Stats</span>
-          <span className="sm:hidden">Stats</span>
-        </button>
-
+        {TABS.map(tab => (
+          <button
+            key={tab.id}
+            onClick={() => onChange(tab.id)}
+            className={`px-3 sm:px-4 py-2.5 rounded-lg font-sans text-xs sm:text-sm font-medium transition-all duration-150 flex items-center gap-1.5 ${mode === tab.id
+              ? 'bg-primary-blue text-white shadow-glow'
+              : 'text-text-secondary hover:text-text-primary'
+              }`}
+          >
+            {tab.icon}
+            <span className="hidden sm:inline">{tab.label}</span>
+            <span className="sm:hidden">{tab.shortLabel}</span>
+          </button>
+        ))}
       </div>
     </div>
   );
@@ -2221,41 +2210,52 @@ function ScreenshotPrivacyGuard() {
     }
   }, [imageBase64]);
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    loadImage(file);
-  };
-
-  const loadImage = (file: File) => {
-    setImageName(file.name);
-    setFindings([]);
-    setScanned(false);
-    const reader = new FileReader();
-    reader.onload = () => {
-      const base64 = (reader.result as string).split(',')[1];
-      setImageBase64(base64);
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleScan = async () => {
-    if (!imageBase64) return;
+  const runScan = useCallback(async (base64: string) => {
     setScanning(true);
     try {
-      const result = await analyzeScreenshot(imageBase64);
+      const result = await analyzeScreenshot(base64);
       setFindings(result.findings);
       setEnabledIds(new Set(
         result.findings.filter(f => f.action === 'blur').map(f => f.id)
       ));
       setAppContext(result.appContext);
-      setScanned(true);
     } catch (err) {
       console.error('Scan error:', err);
-      setScanned(true);
+      setFindings([]);
+      setEnabledIds(new Set());
     } finally {
+      setScanned(true);
       setScanning(false);
     }
+  }, []);
+
+  const loadImage = useCallback((file: File) => {
+    setImageName(file.name);
+    setFindings([]);
+    setEnabledIds(new Set());
+    setScanned(false);
+
+    const reader = new FileReader();
+    reader.onerror = () => {
+      console.error('Could not read the selected file');
+      setImageBase64(null);
+    };
+    reader.onload = () => {
+      const base64 = (reader.result as string | null)?.split(',')[1];
+      if (!base64) return;
+      setImageBase64(base64);
+      // Detection runs straight away — importing an image is the only tap.
+      void runScan(base64);
+    };
+    reader.readAsDataURL(file);
+  }, [runScan]);
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    // Clear the input so picking the same file twice still fires a change.
+    e.target.value = '';
+    if (!file) return;
+    loadImage(file);
   };
 
   const getSeverityStyle = (severity: string) => {
@@ -2298,10 +2298,15 @@ function ScreenshotPrivacyGuard() {
             <p className="font-sans text-xs text-primary-blue">Tap to change image</p>
           </div>
         ) : (
-          <div className="flex flex-col items-center gap-2">
+          <div className="flex flex-col items-center gap-3">
             <Eye className="w-8 h-8 text-primary-blue/60" />
-            <span className="font-sans text-sm font-medium text-primary-blue">Select Screenshot</span>
-            <span className="font-sans text-xs text-text-secondary">Tap or drag an image to scan for sensitive data</span>
+            <span className="px-5 py-2.5 bg-primary-blue text-white font-sans text-sm font-medium rounded-xl shadow-card flex items-center gap-2">
+              <ImageIcon className="w-4 h-4" />
+              Pick a screenshot
+            </span>
+            <span className="font-sans text-xs text-text-secondary">
+              Emails, phone numbers and IDs are found automatically
+            </span>
           </div>
         )}
       </div>
@@ -2314,25 +2319,12 @@ function ScreenshotPrivacyGuard() {
         className="hidden"
       />
 
-      {/* Scan button */}
-      {imageBase64 && !scanned && (
-        <button
-          onClick={handleScan}
-          disabled={scanning}
-          className="w-full py-3 bg-primary-blue text-white font-sans text-sm font-medium rounded-xl hover:bg-primary-blue/90 disabled:opacity-60 transition-all shadow-card flex items-center justify-center gap-2"
-        >
-          {scanning ? (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin" />
-              Scanning with ML Kit OCR...
-            </>
-          ) : (
-            <>
-              <Search className="w-4 h-4" />
-              Scan for Sensitive Data
-            </>
-          )}
-        </button>
+      {/* Detection runs on import, so this is a status line rather than a button */}
+      {scanning && (
+        <div className="w-full py-3 bg-primary-light rounded-xl flex items-center justify-center gap-2 font-sans text-sm font-medium text-primary-blue">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          Looking for sensitive data...
+        </div>
       )}
 
       {/* Results panel */}
@@ -2448,7 +2440,7 @@ function ScreenshotPrivacyGuard() {
 
           {/* Rescan button */}
           <button
-            onClick={() => { setScanned(false); setFindings([]); setEnabledIds(new Set()); }}
+            onClick={() => { if (imageBase64) void runScan(imageBase64); }}
             className="w-full py-2 text-primary-blue font-sans text-xs font-medium hover:underline flex items-center justify-center gap-1"
           >
             <RefreshCw className="w-3 h-3" />
@@ -2475,47 +2467,6 @@ function ScreenshotPrivacyGuard() {
     </div>
   );
 }
-
-// ── Media Scrubber Tab (Wrapper with Sub-Tabs) ──────────────────────────────
-
-function MediaScrubberTab({ mode, onModeChange }: { mode: AppMode; onModeChange: (m: AppMode) => void }) {
-  const subTab = mode === 'privacy-blur' ? 'privacy-blur' : 'media-scrubber';
-
-  return (
-    <div>
-      {/* Sub-tab segmented control */}
-      <div className="flex justify-center px-4 pb-2">
-        <div className="inline-flex bg-white rounded-lg p-0.5 shadow-card border border-border-light">
-          <button
-            onClick={() => onModeChange('media-scrubber')}
-            className={`px-4 py-2 rounded-md font-sans text-xs font-medium transition-all duration-150 flex items-center gap-1.5 ${subTab === 'media-scrubber'
-              ? 'bg-primary-blue text-white shadow-sm'
-              : 'text-text-secondary hover:text-text-primary'
-              }`}
-          >
-            <Scissors className="w-3.5 h-3.5" />
-            Media Scrubber
-          </button>
-          <button
-            onClick={() => onModeChange('privacy-blur')}
-            className={`px-4 py-2 rounded-md font-sans text-xs font-medium transition-all duration-150 flex items-center gap-1.5 ${subTab === 'privacy-blur'
-              ? 'bg-primary-blue text-white shadow-sm'
-              : 'text-text-secondary hover:text-text-primary'
-              }`}
-          >
-            <EyeOff className="w-3.5 h-3.5" />
-            Privacy Blur
-          </button>
-        </div>
-      </div>
-
-      {/* Sub-tab content */}
-      {subTab === 'media-scrubber' ? <MediaScrubber /> : <ScreenshotPrivacyGuard />}
-    </div>
-  );
-}
-
-
 
 function SplashScreen({ onComplete }: { onComplete: () => void }) {
   useEffect(() => {
@@ -2599,7 +2550,8 @@ function StatsDashboard() {
 }
 
 function App() {
-  const [mode, setMode] = useState<AppMode>('link-shield');
+  // Privacy Blur is the product, so it is what the app opens into.
+  const [mode, setMode] = useState<AppMode>('privacy-blur');
   const [status] = useState<'idle' | 'scanning'>('idle');
   const [showSplash, setShowSplash] = useState(true);
   
@@ -2634,14 +2586,10 @@ function App() {
     
     // Check if swipe is mostly horizontal and > 50px
     if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > 50) {
-      if (deltaX > 0) {
-        // Swiped left (go forward)
-        if (mode === 'link-shield') setMode('media-scrubber');
-        else if (mode === 'media-scrubber') setMode('privacy-blur');
-      } else {
-        // Swiped right (go back)
-        if (mode === 'privacy-blur') setMode('media-scrubber');
-        else if (mode === 'media-scrubber') setMode('link-shield');
+      const index = TABS.findIndex(t => t.id === mode);
+      const next = deltaX > 0 ? index + 1 : index - 1;
+      if (index !== -1 && next >= 0 && next < TABS.length) {
+        setMode(TABS[next].id);
       }
     }
     
@@ -2651,15 +2599,16 @@ function App() {
 
   const renderContent = () => {
     switch (mode) {
+      case 'privacy-blur':
+        return <ScreenshotPrivacyGuard />;
+      case 'media-scrubber':
+        return <MediaScrubber />;
       case 'link-shield':
         return <LinkShield />;
-      case 'media-scrubber':
-      case 'privacy-blur':
-        return <MediaScrubberTab mode={mode} onModeChange={setMode} />;
       case 'dashboard':
         return <StatsDashboard />;
       default:
-        return <LinkShield />;
+        return <ScreenshotPrivacyGuard />;
     }
   };
 
