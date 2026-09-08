@@ -5,7 +5,7 @@ import { App as CapacitorApp } from '@capacitor/app';
 import { useBlurEditor, renderToCanvas, REDACTION_STYLES, type RedactionStyle } from '@/hooks/useBlurEditor';
 import { useNativeShare } from '@/hooks/useNativeShare';
 import { useAppStats } from '@/hooks/useAppStats';
-import { Filesystem, Directory } from '@capacitor/filesystem';
+import { saveImage } from '@/lib/saveImage';
 import type { ScreenshotFinding } from '@/hooks/useMLKitOCR';
 import {
     saveCorrection,
@@ -239,12 +239,8 @@ export function BlurEditorModal({ open, onClose, imageBase64, findings, appConte
             const base64 = exportBlurred(canvasRef.current);
             const fileName = `seycure_blurred_${Date.now()}.png`;
 
-            await Filesystem.writeFile({
-                path: `Documents/${fileName}`,
-                data: base64,
-                directory: Directory.ExternalStorage,
-                recursive: true,
-            });
+            const outcome = await saveImage(fileName, base64, 'image/png', 'Save blurred screenshot');
+            if (outcome === 'cancelled') return;
 
             // Persist learning on successful save
             await persistLearning();
@@ -254,17 +250,6 @@ export function BlurEditorModal({ open, onClose, imageBase64, findings, appConte
             setTimeout(() => setSaved(false), 3000);
         } catch (error) {
             console.error('Save error:', error);
-            // Fallback: trigger download in browser
-            if (canvasRef.current) {
-                const link = document.createElement('a');
-                link.download = `seycure_blurred_${Date.now()}.png`;
-                link.href = canvasRef.current.toDataURL('image/png');
-                link.click();
-                await persistLearning();
-                await incrementScreenshotsProtected();
-                setSaved(true);
-                setTimeout(() => setSaved(false), 3000);
-            }
         } finally {
             setSaving(false);
         }

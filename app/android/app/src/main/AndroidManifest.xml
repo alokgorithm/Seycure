@@ -1,11 +1,18 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Permissions -->
+    <!--
+      Permissions. CAMERA is for QR scanning and INTERNET for Safe Browsing
+      lookups; nothing else is declared on purpose.
+
+      No media or storage permission: images are chosen through the system file
+      chooser (<input type="file">) and saved through the share sheet, neither
+      of which needs one. Google's Photo & Video Permissions policy bars
+      READ_MEDIA_IMAGES for an app with this access pattern, so re-adding it
+      risks suspension. ACCESS_NETWORK_STATE appears in the merged manifest
+      from ML Kit's transport-backend-cct and is expected. See CLAUDE.md §7.
+    -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
-    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 

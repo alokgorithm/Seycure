@@ -7,7 +7,7 @@ import JSZip from 'jszip';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Filesystem, Directory } from '@capacitor/filesystem';
+import { saveImage } from '@/lib/saveImage';
 import { useNativeShare } from '@/hooks/useNativeShare';
 import { useAppStats } from '@/hooks/useAppStats';
 
@@ -2142,25 +2142,7 @@ function MediaScrubber() {
 
     const anonName = getAnonymousFilename(file.name);
 
-    try {
-      // Remove the data URL prefix to get pure base64
-      const base64 = dataToDownload.includes(',') ? dataToDownload.split(',')[1] : dataToDownload;
-
-      await Filesystem.writeFile({
-        path: anonName,
-        data: base64,
-        directory: Directory.Documents,
-      });
-      alert(`Saved to Documents/${anonName}`);
-    } catch (e) {
-      // Fallback: trigger browser download
-      const link = document.createElement('a');
-      link.href = dataToDownload;
-      link.download = anonName;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    }
+    await saveImage(anonName, dataToDownload, file.mimeType || 'image/jpeg', 'Save scrubbed file');
   };
 
   const getBadgeStyle = (type: string) => {
@@ -2366,25 +2348,14 @@ function ScreenshotPrivacyGuard() {
     setSaving(true);
     try {
       const fileName = `seycure_clean_${Date.now()}.png`;
-      await Filesystem.writeFile({
-        path: `Documents/${fileName}`,
-        data: imageBase64,
-        directory: Directory.ExternalStorage,
-        recursive: true,
-      });
+      const outcome = await saveImage(fileName, imageBase64, 'image/png', 'Save screenshot');
+      if (outcome === 'cancelled') return;
+
       await incrementScreenshotsProtected();
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch (error) {
       console.error('Save error:', error);
-      // Fallback: trigger browser download
-      const link = document.createElement('a');
-      link.download = `seycure_clean_${Date.now()}.png`;
-      link.href = `data:image/png;base64,${imageBase64}`;
-      link.click();
-      await incrementScreenshotsProtected();
-      setSaved(true);
-      setTimeout(() => setSaved(false), 3000);
     } finally {
       setSaving(false);
     }
