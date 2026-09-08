@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronLeft, Undo2, RotateCcw, Plus, Minus, Download, Share2, Droplets, Grid3x3, Square } from 'lucide-react';
+import { ChevronLeft, Undo2, RotateCcw, Plus, Minus, Download, Share2, Droplets, Grid3x3, Square, ChevronDown, ShieldCheck, Check } from 'lucide-react';
 import { App as CapacitorApp } from '@capacitor/app';
 import { useBlurEditor, renderToCanvas, REDACTION_STYLES, type RedactionStyle } from '@/hooks/useBlurEditor';
 import { useNativeShare } from '@/hooks/useNativeShare';
@@ -26,9 +26,19 @@ interface BlurEditorModalProps {
     imageBase64: string;
     findings: ScreenshotFinding[];
     appContext?: string | null;
+    /** Flip one detection between blurred and left alone. */
+    onToggleFinding?: (id: string) => void;
+    /** Blur every detection, or none of them. */
+    onToggleAll?: () => void;
 }
 
-export function BlurEditorModal({ open, onClose, imageBase64, findings, appContext }: BlurEditorModalProps) {
+const SEVERITY_DOT: Record<string, string> = {
+    critical: 'bg-red-400',
+    high: 'bg-amber-400',
+    medium: 'bg-sky-400',
+};
+
+export function BlurEditorModal({ open, onClose, imageBase64, findings, appContext, onToggleFinding, onToggleAll }: BlurEditorModalProps) {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const imageRef = useRef<HTMLImageElement | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
@@ -37,6 +47,11 @@ export function BlurEditorModal({ open, onClose, imageBase64, findings, appConte
     const [saved, setSaved] = useState(false);
     const [dragCurrent, setDragCurrent] = useState<{ x: number; y: number } | null>(null);
     const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
+    const [listOpen, setListOpen] = useState(false);
+    /** Findings are seeded once per opening; after that the panel drives them. */
+    const seededRef = useRef(false);
+
+    const blurredCount = findings.filter(f => f.action !== 'info').length;
 
     const { shareFile } = useNativeShare();
     const { incrementScreenshotsProtected } = useAppStats();
@@ -50,6 +65,7 @@ export function BlurEditorModal({ open, onClose, imageBase64, findings, appConte
         autoCount,
         manualCount,
         initFromFindings,
+        syncAutoActions,
         handlePointerDown,
         handlePointerUp,
         undo,
@@ -61,6 +77,9 @@ export function BlurEditorModal({ open, onClose, imageBase64, findings, appConte
     } = useBlurEditor(findings);
 
     // ── Load image when modal opens ────────────────────────────────────────
+    // Deliberately not keyed on `findings`. It is rebuilt by the parent on every
+    // toggle, and re-running this would reload the image and rebuild the region
+    // list, throwing away every box the user had drawn by hand.
     useEffect(() => {
         if (!open || !imageBase64) return;
 
@@ -68,15 +87,28 @@ export function BlurEditorModal({ open, onClose, imageBase64, findings, appConte
         img.onload = () => {
             imageRef.current = img;
             setImageLoaded(true);
-            initFromFindings(findings);
         };
         img.src = `data:image/png;base64,${imageBase64}`;
 
         return () => {
             setImageLoaded(false);
             setSaved(false);
+            setListOpen(false);
+            seededRef.current = false;
         };
+    }, [open, imageBase64]);
+
+    // Seed the regions once per opening, then let toggles update them in place.
+    useEffect(() => {
+        if (!open || seededRef.current) return;
+        seededRef.current = true;
+        initFromFindings(findings);
     }, [open, imageBase64, findings, initFromFindings]);
+
+    useEffect(() => {
+        if (!open || !seededRef.current) return;
+        syncAutoActions(findings);
+    }, [open, findings, syncAutoActions]);
 
     // ── Android hardware back button ───────────────────────────────────────
     useEffect(() => {
@@ -306,7 +338,11 @@ export function BlurEditorModal({ open, onClose, imageBase64, findings, appConte
                         <ChevronLeft className="w-5 h-5 text-white" />
                         <span className="font-sans text-sm font-medium text-white">Back</span>
                     </button>
-                    <h2 className="font-sans text-sm font-semibold text-white/70">Blur Editor</h2>
+                    <h2 className="font-sans text-sm font-semibold text-white/70">
+                        {findings.length > 0
+                            ? `Found ${findings.length} sensitive item${findings.length > 1 ? 's' : ''}`
+                            : 'Blur Editor'}
+                    </h2>
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -343,6 +379,17 @@ export function BlurEditorModal({ open, onClose, imageBase64, findings, appConte
                     </button>
                 </div>
             </div>
+
+            {/* Nothing found: say so, rather than leaving a bare canvas that looks
+                like the scan silently failed. */}
+            {findings.length === 0 && (
+                <div className="flex-shrink-0 flex items-center gap-2 px-4 py-2 bg-emerald-500/10 border-b border-emerald-500/20">
+                    <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <p className="font-sans text-xs text-emerald-300">
+                        No sensitive text found. Drag on the image to blur anything by hand.
+                    </p>
+                </div>
+            )}
 
             {/* ── Canvas Area ─────────────────────────────────────────────────── */}
             <div
@@ -401,6 +448,72 @@ export function BlurEditorModal({ open, onClose, imageBase64, findings, appConte
                 )}
             </div>
 
+            {/* ── Detections panel ─────────────────────────────────────────────── */}
+            {findings.length > 0 && (
+                <div className="flex-shrink-0 bg-black/80 border-t border-white/10">
+                    {/* Two sibling controls rather than one nested inside the
+                        other: a button inside a button is invalid, and screen
+                        readers cannot reach the inner one. */}
+                    <div className="flex items-center gap-2 px-4 py-2.5">
+                        <button
+                            onClick={() => setListOpen(v => !v)}
+                            aria-expanded={listOpen}
+                            className="flex items-center gap-2 -mx-1 px-1 py-0.5 rounded hover:bg-white/[0.06] transition-colors"
+                        >
+                            <span className="font-sans text-sm font-semibold text-white">
+                                {blurredCount} of {findings.length} blurred
+                            </span>
+                            <ChevronDown
+                                className={`w-4 h-4 text-white/40 transition-transform ${listOpen ? 'rotate-180' : ''}`}
+                            />
+                        </button>
+                        <button
+                            onClick={() => onToggleAll?.()}
+                            className="ml-auto px-3 py-1 rounded-full bg-white/10 text-white font-sans text-xs font-medium hover:bg-white/20 transition-colors"
+                        >
+                            {blurredCount === findings.length ? 'Blur none' : 'Blur all'}
+                        </button>
+                    </div>
+
+                    {listOpen && (
+                        <div className="max-h-44 overflow-y-auto px-3 pb-3 space-y-1.5">
+                            {findings.map(f => {
+                                const on = f.action !== 'info';
+                                return (
+                                    <button
+                                        key={f.id}
+                                        onClick={() => onToggleFinding?.(f.id)}
+                                        aria-pressed={on}
+                                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg border text-left transition-colors ${on
+                                            ? 'bg-white/[0.06] border-white/15'
+                                            : 'bg-transparent border-white/5'
+                                            }`}
+                                    >
+                                        <span
+                                            className={`w-5 h-5 shrink-0 rounded-md border flex items-center justify-center transition-colors ${on ? 'bg-primary-blue border-primary-blue' : 'border-white/25'
+                                                }`}
+                                        >
+                                            {on && <Check className="w-3.5 h-3.5 text-white" />}
+                                        </span>
+                                        <span className="min-w-0 flex-1">
+                                            <span className="flex items-center gap-1.5">
+                                                <span className={`w-1.5 h-1.5 rounded-full ${SEVERITY_DOT[f.severity] || 'bg-white/40'}`} />
+                                                <span className={`font-sans text-xs font-semibold uppercase tracking-wide ${on ? 'text-white' : 'text-white/40'}`}>
+                                                    {f.type}
+                                                </span>
+                                            </span>
+                                            <span className={`block font-mono text-xs mt-0.5 truncate ${on ? 'text-white/60' : 'text-white/30'}`}>
+                                                {f.redacted}
+                                            </span>
+                                        </span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+            )}
+
             {/* ── Bottom Toolbar ───────────────────────────────────────────────── */}
             <div className="flex-shrink-0 bg-black/80 border-t border-white/10 px-3 py-2 flex flex-col gap-2">
                 {/* Row 1: Redaction style */}
@@ -450,19 +563,19 @@ export function BlurEditorModal({ open, onClose, imageBase64, findings, appConte
                     <button
                         onClick={handleSave}
                         disabled={saving}
-                        className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg font-sans text-xs font-medium transition-all ${saved
-                            ? 'bg-green-500 text-white'
-                            : 'bg-white/10 text-white hover:bg-white/20'
+                        className={`flex-[2] flex items-center justify-center gap-1.5 py-2.5 rounded-lg font-sans text-sm font-semibold transition-all ${saved
+                            ? 'bg-emerald-500 text-white'
+                            : 'bg-primary-blue text-white hover:bg-primary-blue/90 active:scale-[0.99]'
                             }`}
                     >
-                        <Download className="w-3.5 h-3.5" />
-                        {saving ? 'Saving...' : saved ? 'Saved ✓' : 'Save'}
+                        <Download className="w-4 h-4" />
+                        {saving ? 'Saving...' : saved ? 'Saved' : 'Save image'}
                     </button>
                     <button
                         onClick={handleShare}
-                        className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg bg-primary-blue text-white font-sans text-xs font-medium hover:bg-primary-blue/90 transition-colors"
+                        className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg bg-white/10 text-white font-sans text-sm font-medium hover:bg-white/20 transition-colors"
                     >
-                        <Share2 className="w-3.5 h-3.5" />
+                        <Share2 className="w-4 h-4" />
                         Share
                     </button>
                 </div>
@@ -470,8 +583,8 @@ export function BlurEditorModal({ open, onClose, imageBase64, findings, appConte
 
             {/* ── Saved notification ──────────────────────────────────────────── */}
             {saved && (
-                <div className="absolute bottom-20 left-1/2 -translate-x-1/2 px-4 py-2 bg-green-500/90 text-white text-sm font-sans font-medium rounded-full animate-fadeUp">
-                    ✓ Saved to Documents
+                <div className="absolute bottom-24 left-1/2 -translate-x-1/2 px-4 py-2 bg-emerald-500/90 text-white text-sm font-sans font-medium rounded-full animate-fadeUp">
+                    Saved
                 </div>
             )}
         </div>,

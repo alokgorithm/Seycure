@@ -13,6 +13,7 @@ import { useAppStats } from '@/hooks/useAppStats';
 
 import { analyzeScreenshot, type ScreenshotFinding } from '@/hooks/useMLKitOCR';
 import { BlurEditorModal } from '@/components/BlurEditorModal';
+import { renderToCanvas, findingsToBlurRegions } from '@/hooks/useBlurEditor';
 import { LearnedRulesSettings } from '@/components/LearnedRulesSettings';
 import { classifyLink, type CategoryResult } from '@/hooks/useLinkClassifier';
 import { checkPhishingSignals, type PhishingSignal } from '@/hooks/usePhishingDetector';
@@ -2337,6 +2338,7 @@ function ScreenshotPrivacyGuard() {
   const [findings, setFindings] = useState<ScreenshotFinding[]>([]);
   const [appContext, setAppContext] = useState<string | null>(null);
   const [scanned, setScanned] = useState(false);
+  const [scanFailed, setScanFailed] = useState(false);
   const [showEditor, setShowEditor] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -2380,6 +2382,47 @@ function ScreenshotPrivacyGuard() {
     await incrementScreenshotsProtected();
   }, [imageBase64, shareFile, incrementScreenshotsProtected]);
 
+  /**
+   * Saves the image with the enabled detections already redacted, without
+   * making the user open the editor.
+   *
+   * It renders through renderToCanvas rather than reusing handleDirectSave,
+   * which writes imageBase64 - the untouched original. Using that here would
+   * export the very data the scan just flagged.
+   */
+  const handleSaveBlurred = useCallback(async () => {
+    if (!imageBase64) return;
+    setSaving(true);
+    try {
+      const image = new Image();
+      await new Promise<void>((resolve, reject) => {
+        image.onload = () => resolve();
+        image.onerror = () => reject(new Error('Could not decode the image'));
+        image.src = `data:image/png;base64,${imageBase64}`;
+      });
+
+      const canvas = document.createElement('canvas');
+      renderToCanvas(canvas, image, findingsToBlurRegions(editorFindings), 'blur');
+      const blurred = canvas.toDataURL('image/png').split(',')[1];
+
+      const outcome = await saveImage(
+        `seycure_blurred_${Date.now()}.png`,
+        blurred,
+        'image/png',
+        'Save blurred image'
+      );
+      if (outcome === 'cancelled') return;
+
+      await incrementScreenshotsProtected();
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+    } catch (error) {
+      console.error('Save error:', error);
+    } finally {
+      setSaving(false);
+    }
+  }, [imageBase64, editorFindings, incrementScreenshotsProtected]);
+
   // ── Direct save (no blur needed) ────────────────────────────────────────
   const handleDirectSave = useCallback(async () => {
     if (!imageBase64) return;
@@ -2399,8 +2442,15 @@ function ScreenshotPrivacyGuard() {
     }
   }, [imageBase64, incrementScreenshotsProtected]);
 
-  const runScan = useCallback(async (base64: string) => {
+  /**
+   * Runs detection and drops straight into the editor.
+   *
+   * `openEditor` is false for a rescan, where the user is already looking at
+   * the screen behind and re-opening the editor over them would be jarring.
+   */
+  const runScan = useCallback(async (base64: string, openEditor = true) => {
     setScanning(true);
+    let failed = false;
     try {
       const result = await analyzeScreenshot(base64);
       setFindings(result.findings);
@@ -2412,9 +2462,19 @@ function ScreenshotPrivacyGuard() {
       console.error('Scan error:', err);
       setFindings([]);
       setEnabledIds(new Set());
+      failed = true;
     } finally {
       setScanned(true);
       setScanning(false);
+      setScanFailed(failed);
+      // Importing an image is the only tap: the editor opens with the
+      // detections already blurred, and saving from there needs no further
+      // decision. The summary screen stays behind it for anyone who backs out.
+      //
+      // Not after a failure though - the editor would report "no sensitive
+      // text found", which is a dangerous thing to tell someone when the scan
+      // never actually ran. They stay on the summary, which offers Scan again.
+      if (openEditor && !failed) setShowEditor(true);
     }
   }, []);
 
@@ -2447,12 +2507,17 @@ function ScreenshotPrivacyGuard() {
     loadImage(file);
   };
 
-  const getSeverityStyle = (severity: string) => {
+  /**
+   * Severity is carried by a dot and the label, not by a wash over the whole
+   * card. A 10% amber fill over a near-black surface came out muddy brown, and
+   * with every card tinted there was nothing left to signal selection.
+   */
+  const getSeverityAccent = (severity: string) => {
     switch (severity) {
-      case 'critical': return 'bg-red-500/10 text-red-600 dark:text-red-400 border-red-200 dark:border-red-500/30';
-      case 'high': return 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-200 dark:border-amber-500/30';
-      case 'medium': return 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-500/30';
-      default: return 'bg-gray-500/10 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-white/15';
+      case 'critical': return { dot: 'bg-red-500', text: 'text-red-600 dark:text-red-400' };
+      case 'high': return { dot: 'bg-amber-500', text: 'text-amber-600 dark:text-amber-400' };
+      case 'medium': return { dot: 'bg-sky-500', text: 'text-sky-600 dark:text-sky-400' };
+      default: return { dot: 'bg-slate-400', text: 'text-text-secondary' };
     }
   };
 
@@ -2472,7 +2537,12 @@ function ScreenshotPrivacyGuard() {
         className={`w-full py-8 px-4 border-2 border-dashed rounded-xl cursor-pointer transition-all ${isDragging
           ? 'border-primary-blue bg-primary-light/50'
           : imageBase64
-            ? 'border-green-300 dark:border-green-500/40 bg-green-50 dark:bg-green-500/10'
+            // Green reads as "safe", so it is only correct once the scan has
+            // finished and found nothing. It used to apply to any loaded image,
+            // which tinted a receipt full of high-severity hits reassuring green.
+            ? scanned && findings.length === 0
+              ? 'border-emerald-400/40 bg-emerald-50 dark:bg-emerald-500/10'
+              : 'border-border-light dark:border-white/10 bg-white dark:bg-bg-card'
             : 'border-primary-blue/30 hover:border-primary-blue/60 bg-white dark:bg-bg-card'
           }`}
       >
@@ -2521,14 +2591,16 @@ function ScreenshotPrivacyGuard() {
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="font-sans text-sm font-semibold text-text-primary">
-              {findings.length > 0
-                ? `Found ${findings.length} sensitive item${findings.length > 1 ? 's' : ''}`
-                : 'No sensitive data detected'}
+              {scanFailed
+                ? 'Scan did not finish'
+                : findings.length > 0
+                  ? `Found ${findings.length} sensitive item${findings.length > 1 ? 's' : ''}`
+                  : 'No sensitive data detected'}
             </h3>
             {findings.length > 0 && (
               <button
                 onClick={toggleAll}
-                className="px-2.5 py-1 rounded-full bg-primary-light text-primary-blue font-sans text-xs font-medium hover:bg-primary-blue/15 transition-colors"
+                className="px-3 py-1 rounded-full bg-primary-blue/10 dark:bg-white/10 text-primary-blue dark:text-white font-sans text-xs font-medium hover:bg-primary-blue/20 dark:hover:bg-white/20 transition-colors"
               >
                 {allEnabled ? 'Blur none' : 'Blur all'}
               </button>
@@ -2545,28 +2617,43 @@ function ScreenshotPrivacyGuard() {
 
           {findings.map((f, i) => {
             const on = enabledIds.has(f.id);
+            const accent = getSeverityAccent(f.severity);
             return (
               <button
                 key={f.id}
                 onClick={() => toggleFinding(f.id)}
                 aria-pressed={on}
-                className={`w-full text-left px-4 py-3 rounded-xl border transition-all animate-fadeUp ${on ? getSeverityStyle(f.severity) : 'bg-white dark:bg-bg-card text-text-secondary border-border-light'
+                className={`w-full text-left px-4 py-3 rounded-xl border transition-all animate-fadeUp ${on
+                  ? 'bg-white dark:bg-white/[0.06] border-border-light dark:border-white/15'
+                  : 'bg-transparent border-border-light/60 dark:border-white/5'
                   }`}
                 style={{ animationDelay: `${i * 80}ms` }}
               >
                 <div className="flex items-start gap-3">
                   <span
-                    className={`mt-0.5 w-5 h-5 flex-shrink-0 rounded-md border flex items-center justify-center transition-colors ${on ? 'bg-primary-blue border-primary-blue' : 'bg-white dark:bg-bg-card border-border-light'
+                    className={`mt-0.5 w-5 h-5 flex-shrink-0 rounded-md border flex items-center justify-center transition-colors ${on
+                      ? 'bg-primary-blue border-primary-blue'
+                      : 'bg-transparent border-border-light dark:border-white/25'
                       }`}
                   >
                     {on && <Check className="w-3.5 h-3.5 text-white" />}
                   </span>
                   <span className="flex-1 min-w-0">
                     <span className="flex items-center justify-between gap-2">
-                      <span className="font-sans text-xs font-semibold uppercase tracking-wide">{f.type}</span>
-                      <span className="font-sans text-xs font-medium capitalize">{f.severity}</span>
+                      <span className="flex items-center gap-1.5 min-w-0">
+                        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${accent.dot}`} />
+                        <span className={`font-sans text-xs font-semibold uppercase tracking-wide truncate ${on ? 'text-text-primary dark:text-white' : 'text-text-muted'
+                          }`}>
+                          {f.type}
+                        </span>
+                      </span>
+                      <span className={`font-sans text-xs font-medium capitalize flex-shrink-0 ${on ? accent.text : 'text-text-muted'}`}>
+                        {f.severity}
+                      </span>
                     </span>
-                    <span className="block font-mono text-sm mt-1 truncate">{f.redacted}</span>
+                    <span className={`block font-mono text-xs mt-1 truncate ${on ? 'text-text-secondary' : 'text-text-muted'}`}>
+                      {f.redacted}
+                    </span>
                   </span>
                 </div>
               </button>
@@ -2574,23 +2661,48 @@ function ScreenshotPrivacyGuard() {
           })}
 
           {findings.length > 0 && (
-            <button
-              onClick={() => setShowEditor(true)}
-              className="w-full py-3 bg-gradient-to-r from-primary-blue to-blue-600 text-white font-sans text-sm font-medium rounded-xl hover:opacity-90 transition-all shadow-card flex items-center justify-center gap-2"
-            >
-              <EyeOff className="w-4 h-4" />
-              Open Blur Editor
-            </button>
+            <div className="space-y-2">
+              <button
+                onClick={handleSaveBlurred}
+                disabled={saving}
+                className={`w-full py-3 font-sans text-sm font-semibold rounded-xl transition-all shadow-card flex items-center justify-center gap-2 ${saved
+                  ? 'bg-emerald-500 text-white'
+                  : 'bg-primary-blue text-white hover:bg-primary-blue/90 active:scale-[0.99] disabled:opacity-60'
+                  }`}
+              >
+                <Download className="w-4 h-4" />
+                {saving ? 'Saving...' : saved ? 'Saved' : `Save with ${enabledCount} blurred`}
+              </button>
+              <button
+                onClick={() => setShowEditor(true)}
+                className="w-full py-2.5 border border-primary-blue/40 text-primary-blue font-sans text-sm font-medium rounded-xl hover:bg-primary-blue/10 transition-colors flex items-center justify-center gap-2"
+              >
+                <EyeOff className="w-4 h-4" />
+                Edit blur areas
+              </button>
+            </div>
           )}
 
-          {findings.length === 0 && (
+          {scanFailed && (
+            <div className="bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/25 rounded-xl p-4 flex items-start gap-3 animate-fadeUp">
+              <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="font-sans text-sm font-semibold text-amber-700 dark:text-amber-300">Could not read this image</p>
+                <p className="font-sans text-xs text-amber-700/80 dark:text-amber-400/80 mt-1">
+                  Nothing was checked, so do not treat it as clean. Try Scan again, or open the editor and blur by hand.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {findings.length === 0 && !scanFailed && (
             <>
               {/* Clean status card */}
-              <div className="bg-green-50 dark:bg-green-500/10 border border-green-200 dark:border-green-500/30 rounded-xl p-4 flex items-start gap-3 animate-fadeUp">
-                <ShieldCheck className="w-5 h-5 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
+              <div className="bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/25 rounded-xl p-4 flex items-start gap-3 animate-fadeUp">
+                <ShieldCheck className="w-5 h-5 text-emerald-600 dark:text-emerald-400 flex-shrink-0 mt-0.5" />
                 <div>
-                  <p className="font-sans text-sm font-semibold text-green-700 dark:text-green-300">This image looks clean!</p>
-                  <p className="font-sans text-xs text-green-600 dark:text-green-400 mt-1">No sensitive data was found. You can still preview and add manual blur if needed.</p>
+                  <p className="font-sans text-sm font-semibold text-emerald-700 dark:text-emerald-300">This image looks clean</p>
+                  <p className="font-sans text-xs text-emerald-700/80 dark:text-emerald-400/80 mt-1">No sensitive text was found. You can still add blur by hand.</p>
                 </div>
               </div>
 
@@ -2616,12 +2728,12 @@ function ScreenshotPrivacyGuard() {
                   onClick={handleDirectSave}
                   disabled={saving}
                   className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-sans text-xs font-medium transition-all shadow-card ${saved
-                    ? 'bg-green-500 text-white'
-                    : 'border border-primary-blue text-primary-blue hover:bg-primary-blue/10'
+                    ? 'bg-emerald-500 text-white'
+                    : 'border border-primary-blue/40 text-primary-blue dark:text-accent-blue hover:bg-primary-blue/10'
                     }`}
                 >
                   <Download className="w-3.5 h-3.5" />
-                  {saving ? 'Saving...' : saved ? 'Saved ✓' : 'Save'}
+                  {saving ? 'Saving...' : saved ? 'Saved' : 'Save'}
                 </button>
               </div>
             </>
@@ -2629,7 +2741,7 @@ function ScreenshotPrivacyGuard() {
 
           {/* Rescan button */}
           <button
-            onClick={() => { if (imageBase64) void runScan(imageBase64); }}
+            onClick={() => { if (imageBase64) void runScan(imageBase64, false); }}
             className="w-full py-2 text-primary-blue font-sans text-xs font-medium hover:underline flex items-center justify-center gap-1"
           >
             <RefreshCw className="w-3 h-3" />
@@ -2643,6 +2755,8 @@ function ScreenshotPrivacyGuard() {
         <BlurEditorModal
           open={showEditor}
           onClose={() => setShowEditor(false)}
+          onToggleFinding={toggleFinding}
+          onToggleAll={toggleAll}
           imageBase64={imageBase64}
           findings={editorFindings}
           appContext={appContext}

@@ -5,6 +5,12 @@ import type { ScreenshotFinding } from './useMLKitOCR';
 
 export interface BlurRegion {
     id: string;
+    /**
+     * The detection this region came from, for 'auto' regions only. Toggling a
+     * finding has to find its region without touching the manual ones, and the
+     * region's own id is generated, so it cannot be used for that.
+     */
+    findingId?: string;
     x: number;
     y: number;
     width: number;
@@ -48,6 +54,7 @@ export function findingsToBlurRegions(findings: ScreenshotFinding[]): BlurRegion
         .filter(f => f.bbox && f.bbox.width > 0 && f.bbox.height > 0)
         .map(f => ({
             id: nextId(),
+            findingId: f.id,
             x: f.bbox.x,
             y: f.bbox.y,
             width: f.bbox.width,
@@ -191,6 +198,31 @@ export function useBlurEditor(initialFindings: ScreenshotFinding[] = []) {
         setUndoStack([]);
     }, []);
 
+    /**
+     * Re-applies each finding's blur/info action to the region it produced,
+     * leaving manual regions and the undo stack alone.
+     *
+     * This exists because the obvious alternative - calling initFromFindings
+     * whenever the findings prop changes - rebuilds the whole region list, so
+     * toggling one detection would silently discard every box the user had
+     * drawn by hand.
+     */
+    const syncAutoActions = useCallback((findings: ScreenshotFinding[]) => {
+        const actionById = new Map(findings.map(f => [f.id, f.action || 'blur']));
+
+        setRegions(prev => {
+            let changed = false;
+            const next = prev.map(region => {
+                if (region.source !== 'auto' || !region.findingId) return region;
+                const action = actionById.get(region.findingId);
+                if (!action || action === region.action) return region;
+                changed = true;
+                return { ...region, action };
+            });
+            return changed ? next : prev;
+        });
+    }, []);
+
     // ── Add a manual region ────────────────────────────────────────────────
     const addRegion = useCallback((x: number, y: number, width: number, height: number) => {
         if (width < 5 || height < 5) return; // Too small to be intentional
@@ -317,6 +349,7 @@ export function useBlurEditor(initialFindings: ScreenshotFinding[] = []) {
         manualCount,
         undoStack,
         initFromFindings,
+        syncAutoActions,
         addRegion,
         removeRegion,
         handlePointerDown,
