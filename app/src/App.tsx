@@ -2328,7 +2328,7 @@ function MediaScrubber() {
   );
 }
 
-// ── Screenshot Privacy Guard ─────────────────────────────────────────────────
+// ── Privacy Blur ─────────────────────────────────────────────────
 
 function ScreenshotPrivacyGuard() {
   const [imageBase64, setImageBase64] = useState<string | null>(null);
@@ -2376,7 +2376,7 @@ function ScreenshotPrivacyGuard() {
   // ── Direct share (no blur needed) ───────────────────────────────────────
   const handleDirectShare = useCallback(async () => {
     if (!imageBase64) return;
-    await shareFile('seycure_screenshot.png', imageBase64, 'image/png', 'Share screenshot');
+    await shareFile('seycure_image.png', imageBase64, 'image/png', 'Share image');
     await incrementScreenshotsProtected();
   }, [imageBase64, shareFile, incrementScreenshotsProtected]);
 
@@ -2386,7 +2386,7 @@ function ScreenshotPrivacyGuard() {
     setSaving(true);
     try {
       const fileName = `seycure_clean_${Date.now()}.png`;
-      const outcome = await saveImage(fileName, imageBase64, 'image/png', 'Save screenshot');
+      const outcome = await saveImage(fileName, imageBase64, 'image/png', 'Save image');
       if (outcome === 'cancelled') return;
 
       await incrementScreenshotsProtected();
@@ -2480,7 +2480,7 @@ function ScreenshotPrivacyGuard() {
           <div className="flex flex-col items-center gap-3">
             <img
               src={`data:image/png;base64,${imageBase64}`}
-              alt="Screenshot preview"
+              alt="Selected image preview"
               className="max-h-48 rounded-lg shadow-card object-contain"
             />
             <p className="font-sans text-xs text-text-secondary">{imageName}</p>
@@ -2491,10 +2491,10 @@ function ScreenshotPrivacyGuard() {
             <Eye className="w-8 h-8 text-primary-blue/60" />
             <span className="px-5 py-2.5 bg-primary-blue text-white font-sans text-sm font-medium rounded-xl shadow-card flex items-center gap-2">
               <ImageIcon className="w-4 h-4" />
-              Pick a screenshot
+              Pick an image
             </span>
             <span className="font-sans text-xs text-text-secondary">
-              Emails, phone numbers and IDs are found automatically
+              Screenshot, photo or scan — sensitive text is found automatically
             </span>
           </div>
         )}
@@ -2589,7 +2589,7 @@ function ScreenshotPrivacyGuard() {
               <div className="bg-green-50 dark:bg-green-500/10 border border-green-200 dark:border-green-500/30 rounded-xl p-4 flex items-start gap-3 animate-fadeUp">
                 <ShieldCheck className="w-5 h-5 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
                 <div>
-                  <p className="font-sans text-sm font-semibold text-green-700 dark:text-green-300">Your screenshot looks clean!</p>
+                  <p className="font-sans text-sm font-semibold text-green-700 dark:text-green-300">This image looks clean!</p>
                   <p className="font-sans text-xs text-green-600 dark:text-green-400 mt-1">No sensitive data was found. You can still preview and add manual blur if needed.</p>
                 </div>
               </div>
@@ -2678,7 +2678,7 @@ function SplashScreen({ onComplete }: { onComplete: () => void }) {
 function ProtectedItemsCounter({ onOpenStats }: { onOpenStats: () => void }) {
   const { stats } = useAppStats();
   const count = stats.screenshotsProtected || 0;
-  const label = count === 1 ? 'screenshot protected' : 'screenshots protected';
+  const label = count === 1 ? 'image protected' : 'images protected';
   const hasProtectedItems = count > 0 || (stats.photosScrubbed || 0) > 0 || (stats.linksCleaned || 0) > 0 || (stats.trackersRemoved || 0) > 0;
   const hasSecondaryStats = (stats.photosScrubbed || 0) > 0 || (stats.linksCleaned || 0) > 0 || (stats.trackersRemoved || 0) > 0;
 
@@ -2702,7 +2702,7 @@ function ProtectedItemsCounter({ onOpenStats }: { onOpenStats: () => void }) {
             <p className="text-xs text-text-secondary dark:text-text-muted mt-1 font-medium">
               {count > 0 
                 ? 'Protected on this device • Zero data leaves phone' 
-                : 'Screenshots blurred will appear here.'}
+                : 'Images you blur will appear here.'}
             </p>
           </div>
         </div>
@@ -2852,7 +2852,7 @@ function SettingsScreen({ open, onClose }: { open: boolean; onClose: () => void 
                     <div className="grid grid-cols-2 gap-2">
                       <div className="p-2.5 rounded-xl bg-black/[0.03] dark:bg-white/[0.05] text-center">
                         <span className="block font-sans text-lg font-bold text-text-primary dark:text-white">{stats.screenshotsProtected || 0}</span>
-                        <span className="block text-xs text-text-secondary dark:text-text-muted mt-0.5">Screenshots</span>
+                        <span className="block text-xs text-text-secondary dark:text-text-muted mt-0.5">Images</span>
                       </div>
                       <div className="p-2.5 rounded-xl bg-black/[0.03] dark:bg-white/[0.05] text-center">
                         <span className="block font-sans text-lg font-bold text-text-primary dark:text-white">{stats.photosScrubbed || 0}</span>
@@ -2955,7 +2955,7 @@ function App() {
         <TopBar onOpenMenu={() => setShowSettings(true)} />
 
         <main className="flex-1 p-4 space-y-4">
-          {/* 1. HERO CARD ("Blur a screenshot") matching Image 1 */}
+          {/* 1. HERO CARD ("Blur private info") matching Image 1 */}
           <div
             onClick={() => setActiveTool(prev => prev === 'blur' ? 'none' : 'blur')}
             className={`relative group cursor-pointer overflow-hidden rounded-2xl border p-7 text-center transition-all active:scale-[0.99] shadow-lg ${
@@ -2972,10 +2972,10 @@ function App() {
                 </div>
               </div>
               <h2 className="font-sans text-xl sm:text-2xl font-bold text-white tracking-tight">
-                Blur a screenshot
+                Blur private info
               </h2>
               <p className="font-sans text-sm text-accent-blue/80 mt-1 font-medium">
-                Finds emails, phones, IDs
+                Finds emails, phones and IDs in any image
               </p>
             </div>
             <div className="absolute -top-12 -right-12 w-32 h-32 bg-primary-blue/20 rounded-full blur-2xl pointer-events-none" />
@@ -3064,7 +3064,7 @@ function App() {
             {activeTool === 'blur' && (
               <div className="relative bg-white dark:bg-[#161a23] rounded-2xl border border-border-light dark:border-white/10 p-2 shadow-card">
                 <div className="flex items-center justify-between px-3 pt-2 pb-1">
-                  <span className="text-xs font-bold text-text-secondary dark:text-text-muted uppercase tracking-wider">Screenshot Privacy Guard</span>
+                  <span className="text-xs font-bold text-text-secondary dark:text-text-muted uppercase tracking-wider">Privacy Blur</span>
                   <button onClick={() => setActiveTool('none')} className="text-xs text-text-muted hover:text-text-primary flex items-center gap-1">
                     <X className="w-3.5 h-3.5" /> Close
                   </button>

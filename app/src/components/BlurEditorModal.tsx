@@ -239,7 +239,7 @@ export function BlurEditorModal({ open, onClose, imageBase64, findings, appConte
             const base64 = exportBlurred(canvasRef.current);
             const fileName = `seycure_blurred_${Date.now()}.png`;
 
-            const outcome = await saveImage(fileName, base64, 'image/png', 'Save blurred screenshot');
+            const outcome = await saveImage(fileName, base64, 'image/png', 'Save blurred image');
             if (outcome === 'cancelled') return;
 
             // Persist learning on successful save
@@ -259,7 +259,7 @@ export function BlurEditorModal({ open, onClose, imageBase64, findings, appConte
     const handleShare = useCallback(async () => {
         if (!canvasRef.current) return;
         const base64 = exportBlurred(canvasRef.current);
-        await shareFile('seycure_blurred.png', base64, 'image/png', 'Share blurred screenshot');
+        await shareFile('seycure_blurred.png', base64, 'image/png', 'Share blurred image');
         await persistLearning();
         await incrementScreenshotsProtected();
     }, [exportBlurred, shareFile, persistLearning, incrementScreenshotsProtected]);

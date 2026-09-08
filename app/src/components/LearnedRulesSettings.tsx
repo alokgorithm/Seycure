@@ -73,7 +73,7 @@ export function LearnedRulesSettings() {
                         No learned rules yet
                     </p>
                     <p className="font-sans text-xs text-text-secondary mt-1">
-                        Scan and edit screenshots to teach Seycure your preferences
+                        Scan and edit images to teach Seycure your preferences
                     </p>
                 </div>
             ) : (
