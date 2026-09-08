@@ -254,6 +254,186 @@ async function checkUrl(url: string, env: Env): Promise<CheckResponse> {
     }
 }
 
+// ── URL safety guard ─────────────────────────────────────────────────────────
+// /resolve and /title fetch a URL the caller supplies, so without this the
+// Worker is a confused deputy: it sits inside Cloudflare's network and would
+// happily fetch link-local metadata or an internal host on request.
+// Allow only http(s) to a public hostname.
+
+const PRIVATE_HOST = /^(localhost|127\.|0\.|10\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|\[?::1\]?|\[?f[cde])/i;
+
+function assertFetchableUrl(raw: string): URL {
+    let parsed: URL;
+    try {
+        parsed = new URL(raw);
+    } catch {
+        throw new Error('Malformed URL');
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        throw new Error('Only http and https are supported');
+    }
+    if (PRIVATE_HOST.test(parsed.hostname) || !parsed.hostname.includes('.')) {
+        throw new Error('Refusing to fetch a private or non-public host');
+    }
+    return parsed;
+}
+
+// ── Endpoint helper: follow a redirect chain ─────────────────────────────────
+// Replaces the client's use of api.allorigins.win for unwrapping short links.
+
+interface ResolveResult {
+    finalUrl: string;
+    chain: { url: string; status: number }[];
+}
+
+const MAX_HOPS = 10;
+
+async function resolveUrl(target: string): Promise<ResolveResult> {
+    assertFetchableUrl(target);
+
+    const chain: { url: string; status: number }[] = [];
+    let currentUrl = target;
+
+    for (let hop = 0; hop <= MAX_HOPS; hop++) {
+        const res = await fetch(currentUrl, {
+            method: 'HEAD',
+            redirect: 'manual',
+            signal: AbortSignal.timeout(8000),
+        });
+        chain.push({ url: currentUrl, status: res.status });
+
+        const location = res.headers.get('location');
+        if (![301, 302, 303, 307, 308].includes(res.status) || !location) break;
+
+        currentUrl = new URL(location, currentUrl).toString();
+        assertFetchableUrl(currentUrl); // a redirect must not walk us inward
+    }
+
+    return { finalUrl: currentUrl, chain };
+}
+
+// ── Endpoint helper: page metadata ───────────────────────────────────────────
+// Replaces the client's use of api.allorigins.win/get for reading a page title,
+// description and login-form shape. Extraction happens here so the app never
+// receives raw third-party HTML.
+
+interface TitleResult {
+    title: string;
+    description: string;
+    hasLoginForm: boolean;
+    finalUrl: string;
+}
+
+// Enough for <head> on any sane page, small enough to bound cost and memory.
+const MAX_HTML_BYTES = 512 * 1024;
+
+function decodeEntities(text: string): string {
+    return text
+        .replace(/&quot;/g, '"')
+        .replace(/&#0?39;/g, "'")
+        .replace(/&apos;/g, "'")
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&amp;/g, '&');
+}
+
+function firstMatch(html: string, patterns: RegExp[]): string {
+    for (const re of patterns) {
+        const m = html.match(re);
+        if (m?.[1]) return decodeEntities(m[1].trim());
+    }
+    return '';
+}
+
+async function readCapped(res: Response, limit: number): Promise<string> {
+    const reader = res.body?.getReader();
+    if (!reader) return '';
+
+    const decoder = new TextDecoder();
+    let out = '';
+    let total = 0;
+
+    while (total < limit) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        out += decoder.decode(value, { stream: true });
+    }
+    await reader.cancel().catch(() => {});
+    return out;
+}
+
+async function fetchTitle(target: string): Promise<TitleResult> {
+    assertFetchableUrl(target);
+
+    const res = await fetch(target, {
+        redirect: 'follow',
+        signal: AbortSignal.timeout(8000),
+        headers: {
+            // Some sites serve a stub to unknown agents; ask for HTML plainly.
+            'Accept': 'text/html,application/xhtml+xml',
+            'User-Agent': 'Mozilla/5.0 (compatible; SeycureLinkShield/1.0)',
+        },
+    });
+
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('html')) {
+        return { title: '', description: '', hasLoginForm: false, finalUrl: res.url || target };
+    }
+
+    const html = await readCapped(res, MAX_HTML_BYTES);
+
+    const title = firstMatch(html, [
+        /<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i,
+        /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:title["']/i,
+        /<title[^>]*>([^<]+)</i,
+    ]);
+    const description = firstMatch(html, [
+        /<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']+)["']/i,
+        /<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']/i,
+    ]);
+
+    const hasPasswordField = /<input[^>]+type=["']?password["']?/i.test(html);
+    const hasEmailField = /<input[^>]+(type=["']?email["']?|name=["'][^"']*(email|user)[^"']*["'])/i.test(html);
+
+    return {
+        title,
+        description,
+        hasLoginForm: hasPasswordField && hasEmailField,
+        finalUrl: res.url || target,
+    };
+}
+
+// ── Generic KV read-through cache for the two metadata endpoints ─────────────
+
+async function cached<T extends object>(
+    env: Env,
+    prefix: string,
+    key: string,
+    ttl: number,
+    produce: () => Promise<T>
+): Promise<T & { source: 'cache' | 'live' }> {
+    const cacheKey = `${prefix}:${await hashUrl(key)}`;
+
+    try {
+        const hit = await env.GSB_CACHE.get(cacheKey, { type: 'json' }) as T | null;
+        if (hit) return { ...hit, source: 'cache' as const };
+    } catch {
+        // KV read failure - fall through to a live fetch
+    }
+
+    const fresh = await produce();
+
+    try {
+        await env.GSB_CACHE.put(cacheKey, JSON.stringify(fresh), { expirationTtl: ttl });
+    } catch {
+        // KV write failure - non-critical
+    }
+
+    return { ...fresh, source: 'live' as const };
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 //  Main Worker Export
 // ══════════════════════════════════════════════════════════════════════════════
@@ -335,6 +515,39 @@ export default {
             }
         }
 
+        // ── Endpoint: GET /resolve?url=<target> ───────────────────────────────
+        // Unwraps a shortened link. Returns { finalUrl, chain, source }.
+        if (url.pathname === '/resolve' && request.method === 'GET') {
+            const targetUrl = url.searchParams.get('url');
+            if (!targetUrl) {
+                return Response.json({ error: 'Missing ?url= parameter' }, { status: 400, headers: corsHeaders });
+            }
+
+            try {
+                const result = await cached(env, 'resolve', targetUrl, 21600, () => resolveUrl(targetUrl));
+                return Response.json(result, { headers: corsHeaders });
+            } catch (e: any) {
+                return Response.json({ error: 'Resolve failed', details: e.message }, { status: 502, headers: corsHeaders });
+            }
+        }
+
+        // ── Endpoint: GET /title?url=<target> ─────────────────────────────────
+        // Page title, description and login-form shape. Extraction happens here
+        // so the app never handles raw third-party HTML.
+        if (url.pathname === '/title' && request.method === 'GET') {
+            const targetUrl = url.searchParams.get('url');
+            if (!targetUrl) {
+                return Response.json({ error: 'Missing ?url= parameter' }, { status: 400, headers: corsHeaders });
+            }
+
+            try {
+                const result = await cached(env, 'title', targetUrl, 21600, () => fetchTitle(targetUrl));
+                return Response.json(result, { headers: corsHeaders });
+            } catch (e: any) {
+                return Response.json({ error: 'Title fetch failed', details: e.message }, { status: 502, headers: corsHeaders });
+            }
+        }
+
         // ── Endpoint: POST / (legacy raw Safe Browsing proxy) ─────────────────
         // Kept for backward compatibility
         if (request.method === 'POST') {
@@ -372,7 +585,7 @@ export default {
         }
 
         return Response.json(
-            { error: 'Not found', endpoints: ['GET /check?url=', 'GET /redirects?url=', 'GET /stats', 'POST /'] },
+            { error: 'Not found', endpoints: ['GET /check?url=', 'GET /resolve?url=', 'GET /title?url=', 'GET /redirects?url=', 'GET /stats', 'POST /'] },
             { status: 404, headers: corsHeaders }
         );
     },

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { X, Camera, Link2, Image as ImageIcon, ExternalLink, AlertTriangle, Scissors, Check, ChevronRight, Upload, MapPin, Smartphone, Wrench, Download, Share2, Loader2, ArrowRight, Search, Eye, EyeOff, ShieldAlert, ShieldCheck, RefreshCw, FileText, User, Building2, Type, Calendar, ZoomIn, ZoomOut, Trophy, MoreVertical, QrCode, Shield, Sliders, Settings as SettingsIcon, Zap, Clipboard, Lock, Sparkles } from 'lucide-react';
+import { X, Link2, Image as ImageIcon, ExternalLink, AlertTriangle, Scissors, Check, ChevronRight, Upload, MapPin, Smartphone, Wrench, Download, Share2, Loader2, ArrowRight, Search, Eye, EyeOff, ShieldAlert, ShieldCheck, RefreshCw, FileText, User, Building2, Type, Calendar, ZoomIn, ZoomOut, Trophy, MoreVertical, QrCode, Shield, Sliders, Settings as SettingsIcon, Zap, Clipboard, Lock, Sparkles } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
 import exifr from 'exifr';
 import { PDFDocument } from 'pdf-lib';
@@ -50,6 +50,7 @@ interface LinkAnalysis {
   domain: string;
   title: string;
   description: string;
+  /** Domain the mark is drawn from; no longer a remote image URL. */
   favicon: string;
   resolvedUrl?: string;
   domainAgeDays?: number | null;
@@ -852,117 +853,182 @@ function QRScannerModal({ open, onClose, onScan }: { open: boolean; onClose: () 
   );
 }
 
+// ── Link preview ─────────────────────────────────────────────────────────────
+// This used to render the target page in an iframe, proxied through
+// api.allorigins.win to defeat X-Frame-Options. Two things were wrong with it.
+// The third-party proxy broke the on-device promise (CLAUDE.md §6.7), and the
+// iframe carried sandbox="allow-same-origin allow-scripts", a combination the
+// HTML spec says lets a page remove its own sandboxing - so the footer's
+// "NO TRACKING" claim was false and a hostile page ran with real privileges.
+//
+// A privacy tool should not execute the page it is warning you about. The
+// preview is now a summary built from our Worker's /title and /resolve
+// endpoints: the app only ever sees extracted strings, never remote HTML.
+// ── Domain mark ──────────────────────────────────────────────────────────────
+// Stands in for the favicons the app used to pull from
+// www.google.com/s2/favicons and the page thumbnails from image.thum.io. Both
+// sent the domain, and in thum.io's case the full cleaned URL, to a company
+// with no part in this app - which the on-device promise does not allow
+// (CLAUDE.md §6.7, §9 Phase 0). Drawn locally from the domain name instead, so
+// looking at a link reveals nothing to anyone.
+const MARK_COLOURS = [
+  '#0066FF', '#00A3FF', '#10B981', '#F59E0B',
+  '#DC2626', '#8B5CF6', '#EC4899', '#14B8A6',
+];
+
+function markColour(domain: string): string {
+  let hash = 0;
+  for (let i = 0; i < domain.length; i++) {
+    hash = (hash * 31 + domain.charCodeAt(i)) >>> 0;
+  }
+  return MARK_COLOURS[hash % MARK_COLOURS.length];
+}
+
+function DomainMark({ domain, className = '' }: { domain: string; className?: string }) {
+  const letter = (domain.replace(/^www\./, '')[0] || '?').toUpperCase();
+  return (
+    <div
+      className={`flex items-center justify-center rounded-lg font-sans font-semibold text-white select-none shrink-0 ${className}`}
+      style={{ backgroundColor: markColour(domain) }}
+      aria-hidden="true"
+    >
+      {letter}
+    </div>
+  );
+}
+
 function BrowserModal({ url, open, onClose }: { url: string; open: boolean; onClose: () => void }) {
-  const [progress, setProgress] = useState(0);
-  const [loaded, setLoaded] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [meta, setMeta] = useState<{ title: string; description: string; hasLoginForm: boolean } | null>(null);
+  const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    if (open) {
-      setProgress(0);
-      setLoaded(false);
+    if (!open) return;
 
-      const steps = [20, 45, 70, 88];
-      steps.forEach((p, i) => {
-        setTimeout(() => setProgress(p), (i + 1) * 300);
-      });
+    let cancelled = false;
+    setLoading(true);
+    setFailed(false);
+    setMeta(null);
+    setResolvedUrl(null);
 
-      const loadTimer = setTimeout(() => {
-        setProgress(100);
-        setLoaded(true);
-      }, 3500); // Increased time since proxy takes a bit longer
+    const opts = { signal: AbortSignal.timeout(10000) };
 
-      return () => {
-        clearTimeout(loadTimer);
-      };
-    }
-  }, [open]);
+    Promise.allSettled([
+      fetch(`${SAFE_BROWSING_WORKER_URL}/title?url=${encodeURIComponent(url)}`, opts).then(r => r.json()),
+      fetch(`${SAFE_BROWSING_WORKER_URL}/resolve?url=${encodeURIComponent(url)}`, opts).then(r => r.json()),
+    ]).then(([titleRes, resolveRes]) => {
+      if (cancelled) return;
+
+      if (titleRes.status === 'fulfilled' && !titleRes.value?.error) {
+        const v = titleRes.value;
+        setMeta({
+          title: v.title || '',
+          description: v.description || '',
+          hasLoginForm: Boolean(v.hasLoginForm),
+        });
+      } else {
+        setFailed(true);
+      }
+
+      if (resolveRes.status === 'fulfilled' && resolveRes.value?.finalUrl && resolveRes.value.finalUrl !== url) {
+        setResolvedUrl(resolveRes.value.finalUrl);
+      }
+
+      setLoading(false);
+    });
+
+    return () => { cancelled = true; };
+  }, [open, url]);
 
   const domain = getDomainFromUrl(url);
-  // Use a proxy to bypass X-Frame-Options and CORS restrictions that cause ERR_BLOCKED_BY_RESPONSE
-  const proxiedUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
+  const destinationDomain = resolvedUrl ? getDomainFromUrl(resolvedUrl) : null;
+  const redirectsElsewhere = Boolean(destinationDomain && destinationDomain !== domain);
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl h-[90vh] bg-white dark:bg-bg-card border-border p-0 overflow-hidden flex flex-col">
-        {/* Chrome bar */}
+      <DialogContent className="max-w-lg bg-white dark:bg-bg-card border-border p-0 overflow-hidden flex flex-col">
+        {/* Header */}
         <div className="flex items-center gap-3 px-4 py-3 bg-bg-light border-b border-border-light">
-          {/* Traffic lights */}
-          <div className="flex gap-2">
-            <button onClick={onClose} className="w-3 h-3 rounded-full bg-danger-red hover:brightness-110 transition-all group relative">
-              <X className="w-2 h-2 absolute inset-0 m-auto opacity-0 group-hover:opacity-100 text-white" />
-            </button>
-            <div className="w-3 h-3 rounded-full bg-warning-amber" />
-            <div className="w-3 h-3 rounded-full bg-success-green" />
+          <div className="flex-1 flex items-center gap-2 bg-white dark:bg-bg-card rounded-lg px-3 py-1.5 border border-border-light min-w-0">
+            <Lock className="w-3 h-3 text-primary-blue/60 shrink-0" />
+            <span className="text-primary-blue font-mono text-xs truncate">{domain}</span>
           </div>
+          <button
+            onClick={onClose}
+            className="p-1.5 text-text-secondary hover:text-text-primary transition-colors"
+            aria-label="Close preview"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
 
-          {/* Address bar */}
-          <div className="flex-1 flex items-center gap-2 bg-white dark:bg-bg-card rounded-lg px-3 py-1.5 border border-border-light">
-            <span className="text-primary-blue/60 font-mono text-xs">https://</span>
-            <span className="text-primary-blue font-mono text-xs">{domain}</span>
-            <span className="text-text-muted font-mono text-xs truncate">{url.split(domain)[1] || ''}</span>
-            <span className="ml-auto text-primary-blue/60 font-mono text-xs border border-primary-blue/30 px-1.5 py-0.5 rounded">SANDBOXED</span>
-          </div>
+        {/* Body */}
+        <div className="p-5 space-y-4">
+          {loading ? (
+            <div className="flex flex-col items-center justify-center py-10 gap-3">
+              <Loader2 className="w-6 h-6 text-primary-blue animate-spin" />
+              <p className="font-sans text-xs text-text-muted">Reading {domain} safely&hellip;</p>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-start gap-3">
+                <DomainMark domain={domain} className="w-10 h-10 text-base" />
+                <div className="min-w-0">
+                  <p className="font-sans text-sm font-semibold text-text-primary break-words">
+                    {meta?.title || domain}
+                  </p>
+                  {meta?.description ? (
+                    <p className="font-sans text-xs text-text-secondary mt-1 line-clamp-3">
+                      {meta.description}
+                    </p>
+                  ) : null}
+                </div>
+              </div>
 
-          {/* Open real button */}
+              {redirectsElsewhere ? (
+                <div className="flex items-start gap-2 p-3 rounded-lg bg-warning-amber/10 border border-warning-amber/30">
+                  <AlertTriangle className="w-4 h-4 text-warning-amber shrink-0 mt-0.5" />
+                  <div className="min-w-0">
+                    <p className="font-sans text-xs font-medium text-text-primary">This link redirects</p>
+                    <p className="font-mono text-xs text-text-secondary break-all mt-0.5">{destinationDomain}</p>
+                  </div>
+                </div>
+              ) : null}
+
+              {meta?.hasLoginForm ? (
+                <div className="flex items-start gap-2 p-3 rounded-lg bg-danger-red/10 border border-danger-red/30">
+                  <ShieldAlert className="w-4 h-4 text-danger-red shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-sans text-xs font-medium text-text-primary">Asks for a sign-in</p>
+                    <p className="font-sans text-xs text-text-secondary mt-0.5">
+                      Check the address carefully before entering a password.
+                    </p>
+                  </div>
+                </div>
+              ) : null}
+
+              {failed ? (
+                <p className="font-sans text-xs text-text-muted">
+                  Could not read this page. It may be offline or blocking automated requests.
+                </p>
+              ) : null}
+            </>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between gap-3 px-4 py-3 bg-bg-light border-t border-border-light">
+          <p className="font-sans text-xs text-text-muted">Nothing from this page was run on your device.</p>
           <a
-            href={url}
+            href={resolvedUrl || url}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-1 px-3 py-1.5 bg-primary-blue text-white rounded-lg font-sans text-xs hover:bg-primary-blue/90 transition-colors"
+            className="flex items-center gap-1 px-3 py-1.5 bg-primary-blue text-white rounded-lg font-sans text-xs hover:bg-primary-blue/90 transition-colors shrink-0"
           >
             <ExternalLink className="w-3 h-3" />
-            Open Real
+            Open
           </a>
-        </div>
-
-        {/* Progress bar */}
-        <div className="h-0.5 bg-border-light">
-          <div
-            className="h-full bg-gradient-to-r from-primary-blue to-accent-blue transition-all duration-300"
-            style={{ width: `${progress}%` }}
-          />
-        </div>
-
-        {/* Content viewport */}
-        <div className="flex-1 relative overflow-hidden bg-white dark:bg-bg-card">
-          {!loaded ? (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-white dark:bg-bg-card z-10">
-              <div className="relative w-12 h-12 mb-4">
-                <div className="absolute inset-0 border-2 border-primary-blue/30 rounded-full" />
-                <div className="absolute inset-0 border-2 border-t-primary-blue rounded-full animate-spin-slow" />
-                <div className="absolute inset-2 border-2 border-primary-blue/30 rounded-full" />
-                <div className="absolute inset-2 border-2 border-b-primary-blue rounded-full animate-spin-reverse" />
-              </div>
-              <p className="font-sans text-sm text-text-secondary">{domain}</p>
-              <p className="font-sans text-xs text-text-muted mt-2">Bypassing restrictions via Proxy...</p>
-            </div>
-          ) : null}
-          <iframe
-            src={proxiedUrl}
-            className="w-full h-full border-0"
-            sandbox="allow-same-origin allow-scripts"
-            onLoad={() => {
-              setProgress(100);
-              setLoaded(true);
-            }}
-          />
-
-          {/* Corner brackets */}
-          <div className="absolute top-4 left-4 w-6 h-6 border-t border-l border-primary-blue/30 pointer-events-none" />
-          <div className="absolute top-4 right-4 w-6 h-6 border-t border-r border-primary-blue/30 pointer-events-none" />
-          <div className="absolute bottom-4 left-4 w-6 h-6 border-b border-l border-primary-blue/30 pointer-events-none" />
-          <div className="absolute bottom-4 right-4 w-6 h-6 border-b border-r border-primary-blue/30 pointer-events-none" />
-        </div>
-
-        {/* Bottom safety bar */}
-        <div className="flex items-center justify-between px-4 py-2 bg-bg-light border-t border-border-light">
-          <div className="flex items-center gap-2 text-text-secondary font-sans text-xs">
-            <span className="text-primary-blue">&#128274;</span>
-            SANDBOX · NO FORMS · NO POPUPS · NO TRACKING
-          </div>
-          <button onClick={onClose} className="text-text-secondary hover:text-text-primary font-sans text-xs transition-colors">
-            &#10005; Close
-          </button>
         </div>
       </DialogContent>
     </Dialog>
@@ -1111,7 +1177,7 @@ function PreviewCard({ analysis, onDismiss }: { analysis: LinkAnalysis; onDismis
     // Real async threat check via Cloudflare Worker
     let cancelled = false;
     const runChecks = async () => {
-      // Feature 2: Fetch redirect chain locally using allorigins as a proxy tracer
+      // Feature 2: Build a display chain from the URL we already resolved
       try {
         if (!redirectChain && analysis.isShortener) {
           const mockChain = [{ url: analysis.originalUrl, status: 301 }];
@@ -1256,12 +1322,7 @@ function PreviewCard({ analysis, onDismiss }: { analysis: LinkAnalysis; onDismis
             {/* Simple Clean UI Header */}
             <div className="flex items-start justify-between gap-3">
               <div className="flex items-center gap-3">
-                <img
-                  src={analysis.favicon}
-                  alt=""
-                  className="w-8 h-8 rounded-lg"
-                  onError={(e) => { (e.target as HTMLImageElement).src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">&#127760;</text></svg>'; }}
-                />
+                <DomainMark domain={analysis.favicon} className="w-8 h-8 text-sm" />
                 <div>
                   <p className="font-sans text-sm font-medium text-text-primary truncate">{analysis.domain}</p>
                   <p className="font-sans text-xs text-text-secondary">{analysis.category.icon} {analysis.category.label}</p>
@@ -1452,12 +1513,7 @@ function PreviewCard({ analysis, onDismiss }: { analysis: LinkAnalysis; onDismis
                   </div>
                 ) : (
                   <>
-                    <img
-                      src={analysis.favicon}
-                      alt=""
-                      className="w-8 h-8 rounded-lg"
-                      onError={(e) => { (e.target as HTMLImageElement).src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">&#127760;</text></svg>'; }}
-                    />
+                    <DomainMark domain={analysis.favicon} className="w-8 h-8 text-sm" />
                     <div className="flex-1 min-w-0">
                       <p className="font-sans text-sm font-medium text-text-primary truncate">{analysis.title || analysis.domain}</p>
                       <div className="flex items-center gap-2">
@@ -1498,34 +1554,23 @@ function PreviewCard({ analysis, onDismiss }: { analysis: LinkAnalysis; onDismis
                   <div className="h-8 bg-border-light rounded animate-shimmer shimmer-1" />
                   <div className="h-24 bg-border-light rounded animate-shimmer shimmer-2" />
                   <div className="h-16 bg-border-light rounded animate-shimmer shimmer-3" />
-                  <p className="font-sans text-xs text-text-secondary text-center pt-2">Capturing screenshot...</p>
+                  <p className="font-sans text-xs text-text-secondary text-center pt-2">Checking link...</p>
                 </div>
               ) : (
-                <div
-                  className="relative group cursor-pointer rounded-lg overflow-hidden"
+                <button
+                  type="button"
+                  className="w-full flex items-center gap-3 p-4 rounded-lg bg-bg-light border border-border-light hover:border-primary-blue/40 transition-colors text-left"
                   onClick={() => setShowBrowser(true)}
                 >
-                  <img
-                    src={`https://image.thum.io/get/width/800/crop/600/${analysis.cleanedUrl}`}
-                    alt="Preview"
-                    className="w-full h-48 object-cover opacity-90 group-hover:opacity-100 transition-opacity"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).style.display = 'none';
-                      (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden');
-                    }}
-                  />
-                  <div className="hidden absolute inset-0 flex flex-col items-center justify-center bg-bg-light rounded-lg">
-                    <Camera className="w-8 h-8 text-text-secondary mb-2" />
-                    <p className="font-sans text-xs text-text-secondary">Screenshot Unavailable</p>
+                  <DomainMark domain={analysis.favicon} className="w-11 h-11 text-lg" />
+                  <div className="min-w-0 flex-1">
+                    <p className="font-sans text-sm font-medium text-text-primary truncate">
+                      {analysis.title || analysis.favicon}
+                    </p>
+                    <p className="font-sans text-xs text-text-secondary">Check this link before opening it</p>
                   </div>
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/30">
-                    <div className="flex items-center gap-2 px-4 py-2 bg-primary-blue text-white rounded-lg">
-                      <ExternalLink className="w-4 h-4" />
-                      <span className="font-sans text-xs font-medium">Open Preview</span>
-                    </div>
-                  </div>
-                  <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-white to-transparent pointer-events-none" />
-                </div>
+                  <ChevronRight className="w-4 h-4 text-text-muted shrink-0" />
+                </button>
               )}
 
               {/* OG Metadata */}
@@ -1688,62 +1733,55 @@ function LinkShield({ initialUrl }: { initialUrl?: string } = {}) {
         domain,
         title: domain,
         description: '',
-        favicon: `https://www.google.com/s2/favicons?domain=${domain}&sz=64`,
+        favicon: domain,
         phishingSignals: checkPhishingSignals(value, domain, domain, domain, false, isShort),
       };
       setAnalysis(instantAnalysis);
 
-      // Phase 2: Enhance with network metadata (title, description, login form scan)
-      fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(value)}`)
+      // Phase 2: Enhance with page metadata from our Worker. It fetches the
+      // page and returns only extracted fields, so no third-party proxy is
+      // involved and no remote HTML is parsed on the device.
+      fetch(`${SAFE_BROWSING_WORKER_URL}/title?url=${encodeURIComponent(value)}`, {
+        signal: AbortSignal.timeout(10000),
+      })
         .then(r => r.json())
-        .then(data => {
-          const html = data.contents || '';
-          const titleMatch = html.match(/<meta property="og:title" content="([^"]+)"/) || html.match(/<title>([^<]+)/);
-          const descMatch = html.match(/<meta property="og:description" content="([^"]+)"/) || html.match(/<meta name="description" content="([^"]+)"/);
+        .then((data: any) => {
+          if (data?.error) return;
 
-          const title = titleMatch?.[1]?.trim() || domain;
-
-          // Login form scan using regex on fetched HTML
-          const hasPasswordField = /<input[^>]+type=["']?password["']?/i.test(html);
-          const hasEmailField = /<input[^>]+(type=["']?email["']?|name=["'][^"']*(email|user)[^"']*["'])/i.test(html);
-          const hasLoginForm = hasPasswordField && hasEmailField;
-
-          const pSignals = checkPhishingSignals(value, domain, domain, title, hasLoginForm, isShort);
+          const title = data.title || domain;
+          const pSignals = checkPhishingSignals(value, domain, domain, title, Boolean(data.hasLoginForm), isShort);
 
           setAnalysis(prev => prev ? {
             ...prev,
-            category: classifyLink(domain, titleMatch?.[1] || ''),
+            category: classifyLink(domain, data.title || ''),
             title,
-            description: descMatch?.[1]?.trim() || '',
+            description: data.description || '',
             phishingSignals: pSignals.length > 0 ? pSignals : prev.phishingSignals,
           } : prev);
-
-          // Resolve shortened URL destination using CF Worker redirect tracer
-          if (isShort) {
-            fetch(`${SAFE_BROWSING_WORKER_URL}/redirects?url=${encodeURIComponent(value)}`, {
-              signal: AbortSignal.timeout(8000),
-            })
-              .then(r => r.json())
-              .then((chainData: any) => {
-                // chainData is an array of { url, status } hops
-                const hops = Array.isArray(chainData) ? chainData : [];
-                const finalHop = hops[hops.length - 1];
-                if (finalHop?.url && finalHop.url !== value) {
-                  setAnalysis(prev => prev ? { ...prev, resolvedUrl: finalHop.url } : prev);
-                }
-              })
-              .catch(() => {
-                // Fallback: allorigins sometimes returns the final URL in status.url
-                if (data.status?.url && data.status.url !== value) {
-                  setAnalysis(prev => prev ? { ...prev, resolvedUrl: data.status.url } : prev);
-                }
-              });
-          }
         })
         .catch(() => {
           // Keep the instant local analysis already shown
         })
         .finally(() => setIsScanning(false));
+
+      // Resolve a shortened link to its destination. Runs independently of the
+      // metadata call so one failing does not suppress the other; the previous
+      // version nested this inside the fetch above and read the wrong shape off
+      // /redirects, so the resolved URL never actually appeared.
+      if (isShort) {
+        fetch(`${SAFE_BROWSING_WORKER_URL}/resolve?url=${encodeURIComponent(value)}`, {
+          signal: AbortSignal.timeout(10000),
+        })
+          .then(r => r.json())
+          .then((data: any) => {
+            if (data?.finalUrl && data.finalUrl !== value) {
+              setAnalysis(prev => prev ? { ...prev, resolvedUrl: data.finalUrl } : prev);
+            }
+          })
+          .catch(() => {
+            // Leave resolvedUrl unset; the UI treats that as "not resolved"
+          });
+      }
 
       // Phase 3: Domain Age (RDAP)
       const rootDomain = domain.split('.').slice(-2).join('.');
