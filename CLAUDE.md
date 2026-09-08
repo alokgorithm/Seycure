@@ -43,8 +43,22 @@ anything works until you have seen it run.
 metadata), `jszip` (DOCX metadata).
 **Native bridge:** Capacitor v6 — `@capacitor/share`, `@capacitor/filesystem`,
 `@capacitor/app`, `@capacitor/preferences`. Google ML Kit for on-device OCR.
-**Backend (optional):** Cloudflare Worker as an edge proxy for Google Safe
-Browsing, with KV cache, request coalescing, batching, and per-IP rate limiting.
+**Backend:** Cloudflare Worker (`seycure-safe-browsing`) as an edge proxy, with
+KV cache, request coalescing, batching, and per-IP rate limiting. Endpoints:
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /check?url=` | Google Safe Browsing verdict |
+| `GET /resolve?url=` | unwrap a shortened link to its final URL |
+| `GET /title?url=` | page title, description, login-form shape |
+| `GET /redirects?url=` | raw redirect chain (superseded by `/resolve`) |
+| `GET /stats` | health check |
+
+`/resolve` and `/title` fetch a caller-supplied URL, so both run through
+`assertFetchableUrl`, which rejects non-http(s) schemes and private, loopback
+and link-local hosts and re-checks after every redirect hop. Keep that guard on
+any endpoint you add that fetches a URL - without it the Worker is an SSRF
+gadget sitting inside Cloudflare's network.
 
 **Repo layout:**
 
@@ -167,10 +181,17 @@ plus the self-scoped androidx receiver permission. This supersedes the earlier
 "`CAMERA` and `INTERNET` only" target, which predated the audit and was wrong
 about what ML Kit drags in. Do not try to remove `ACCESS_NETWORK_STATE`.
 
-Preferred replacement for the media access: a plain
-`<input type="file" accept="image/*">` in the WebView, which routes to the system
-chooser and needs **no permission at all**. Fallback: a Capacitor plugin using the
-Android Photo Picker (`ACTION_PICK_IMAGES`).
+**How input and output work now (done 2026-09-08).** Picking a file goes through
+a plain `<input type="file" accept="image/*">`, which routes to the system
+chooser and needs no permission. Saving goes through `app/src/lib/saveImage.ts`,
+which writes into the app's own cache and hands the FileProvider URI to the
+share sheet - the user's choice of destination is the grant. `file_paths.xml`
+exposes app-private locations only.
+
+Do not reintroduce `Directory.ExternalStorage` or `Directory.Documents`. Both
+need `WRITE_EXTERNAL_STORAGE`, which has been a no-op under scoped storage since
+Android 10, so those writes were failing into the browser download fallback on
+every modern device.
 
 **Billing.** One-time purchases must be **non-consumable**. Acknowledge every
 purchase within 72 hours or Google auto-refunds it and revokes access — this is
@@ -208,18 +229,46 @@ revenue. So rating is the business metric, not a vanity one.
 Work in order. Do not start a phase until the previous one passes on a real
 device. One phase per branch.
 
-**Phase 0 — Policy blockers.** ~~Audit permissions across the repo and the merged
-manifest~~ — **done, see §7; no plugin injects anything, all three offending
-permissions are ours to delete.** Replace
-media access with the system file chooser. Fix output saving to need no storage
-permission (app-specific storage plus share sheet, or MediaStore into Downloads).
-Move the `allorigins.win` dependency into our own Worker as `/resolve` and
-`/title` endpoints reusing the existing cache and rate limiting. Add Crashlytics
-only. *Acceptance: merged manifest has only `CAMERA`, `INTERNET` and the ML Kit
-`ACCESS_NETWORK_STATE` (see §7); all three modes work end to end; no request goes
-anywhere except our Worker and rdap.org.*
+**Phase 0 — Policy blockers. Code complete 2026-09-08 on `phase-0-policy`; not
+yet accepted.** All four items are done and verified on the build:
 
-**Phase 1 — Reposition around Privacy Blur.** App opens directly into Privacy
+- Permission audit — see §7. No plugin injects anything.
+- Media permissions removed; picker and saving need none (§7).
+- `allorigins.win` gone; `/resolve` and `/title` added to the Worker (§3).
+- Crashlytics wired, gated on `google-services.json`.
+
+Two things turned up mid-phase that the original plan had not listed, and both
+had to go for the same reason: `image.thum.io` received the full cleaned URL to
+render a link thumbnail, and `www.google.com/s2/favicons` received the domain.
+`DomainMark` in `App.tsx` draws a letter tile locally in their place.
+`BrowserModal` no longer renders the target page in an iframe at all.
+
+*Acceptance: merged manifest has only `CAMERA`, `INTERNET` and the ML Kit
+`ACCESS_NETWORK_STATE` (see §7) — **met**; no request goes anywhere except our
+Worker and rdap.org — **met**; all three modes work end to end — **outstanding,
+needs a physical device**.*
+
+**Before Phase 1 can be called done, run these on a real Android 13+ device:**
+
+1. Pick a screenshot in Privacy Blur; confirm the chooser opens with no
+   permission prompt and OCR still finds text.
+2. Save a blurred image; confirm the share sheet appears and the file lands
+   where you send it. This is the biggest behaviour change in the phase.
+3. Back out of the share sheet; confirm the protected-screenshots count does
+   *not* increase.
+4. Scrub a photo and a PDF in Media Scrubber, then save each.
+5. Paste a shortened link into Link Shield; confirm the destination resolves
+   and the preview card shows a title.
+6. Scan a QR code; confirm the camera permission prompt still appears.
+
+Then deploy the Worker (`cd worker && npx wrangler deploy`) — `/resolve` and
+`/title` are only on the local build so far, so Link Shield will fall back to
+its instant local analysis until you do.
+
+**Phase 1 — Reposition around Privacy Blur.** *Landed ahead of Phase 0 on
+`phase-1-privacy-blur`, against the "work in order" rule above, so it has never
+been checked on a device with the Phase 0 changes in place. Fold its checks into
+the device pass listed under Phase 0.* App opens directly into Privacy
 Blur with a visible "Pick a screenshot" action; other modes become secondary
 tabs. Run OCR and detection immediately on import with no extra tap. Show a count
 ("Found 4 sensitive items") — that sentence is the product. Make every detection
@@ -278,7 +327,11 @@ whatever reviews are asking for.
 1. Play Console account and identity verification — **in progress**
 2. `arkqube.github.io` for the privacy policy and landing page
 3. Recruit 12 closed testers
-4. AdMob account, app ID, rewarded ad unit ID
-5. Physical Android 13+ test device
-6. Decide on a public address for the developer profile (monetised individual
+4. Firebase project for Crashlytics — create it against
+   `com.arkqube.seycure`, download `google-services.json`, and drop it into
+   `app/android/app/`. The build is already wired and switches on when the file
+   is present; it is gitignored, so keep an offline copy.
+5. AdMob account, app ID, rewarded ad unit ID
+6. Physical Android 13+ test device
+7. Decide on a public address for the developer profile (monetised individual
    accounts display the owner's full legal address publicly)
