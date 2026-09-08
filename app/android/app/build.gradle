@@ -67,15 +67,30 @@ dependencies {
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')
     implementation 'com.google.mlkit:text-recognition:16.0.1'
+
+    // Crash reporting only. The BoM keeps the Firebase versions consistent;
+    // adding any other firebase-* artifact here needs a policy decision first,
+    // because it changes what the Play Data Safety form has to declare.
+    implementation platform('com.google.firebase:firebase-bom:33.1.2')
+    implementation 'com.google.firebase:firebase-crashlytics'
 }
 
 apply from: 'capacitor.build.gradle'
 
+// Firebase Crashlytics is the only telemetry this app carries. CLAUDE.md §6.5
+// rules out analytics of every other kind - no Firebase Analytics, no event
+// telemetry - so do not let anything else in through this door.
+//
+// Both plugins need google-services.json, which is not in the repo because it
+// is per-project configuration the owner generates in the Firebase console.
+// Without it the build still succeeds and simply ships no crash reporting, so
+// a fresh clone works. Drop the file in app/android/app/ to switch it on.
 try {
     def servicesJSON = file('google-services.json')
     if (servicesJSON.text) {
         apply plugin: 'com.google.gms.google-services'
+        apply plugin: 'com.google.firebase.crashlytics'
     }
 } catch(Exception e) {
-    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+    logger.lifecycle("google-services.json not found - Crashlytics is disabled for this build.")
 }
