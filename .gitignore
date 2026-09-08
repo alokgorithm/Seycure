@@ -2,6 +2,7 @@
 node_modules/
 
 # Build output
+worker/.wrangler/
 app/dist/
 app/android/app/build/
 app/android/build/
