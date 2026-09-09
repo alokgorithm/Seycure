@@ -1,6 +1,24 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { X, Link2, Image as ImageIcon, ExternalLink, AlertTriangle, Scissors, Check, ChevronRight, Upload, MapPin, Smartphone, Wrench, Download, Share2, Loader2, ArrowRight, Search, Eye, EyeOff, ShieldAlert, ShieldCheck, RefreshCw, FileText, User, Building2, Type, Calendar, ZoomIn, ZoomOut, Trophy, MoreVertical, QrCode, Shield, Sliders, Settings as SettingsIcon, Zap, Clipboard, Lock, Sparkles } from 'lucide-react';
+import { Capacitor, registerPlugin } from '@capacitor/core';
 import { Html5Qrcode } from 'html5-qrcode';
+
+/**
+ * Opens this app's page in Android Settings. Needed because a denied camera
+ * permission cannot be re-requested from the WebView, so the settings page is
+ * the only way back.
+ */
+const AppSettings = registerPlugin<{ open(): Promise<void> }>('AppSettings');
+
+async function openAppSettings(): Promise<void> {
+  try {
+    await AppSettings.open();
+  } catch (err) {
+    // Nothing useful to offer if the settings screen will not open; the
+    // instruction above the button still stands.
+    console.error('Could not open app settings:', err);
+  }
+}
 import exifr from 'exifr';
 import { PDFDocument } from 'pdf-lib';
 import JSZip from 'jszip';
@@ -806,8 +824,18 @@ function QRScannerModal({ open, onClose, onScan }: { open: boolean; onClose: () 
               <div className="space-y-2 p-2">
                 <p className="font-sans text-sm font-bold text-danger-red">Camera Permission Required</p>
                 <p className="font-sans text-xs text-white/60">
-                  Please enable Camera permissions in your Android Settings to scan QR codes.
+                  Camera access is off, so QR scanning cannot start. Turn it on
+                  under Permissions, then come back and try again.
                 </p>
+                {Capacitor.isNativePlatform() && (
+                  <Button
+                    onClick={openAppSettings}
+                    className="bg-primary-blue text-white text-xs px-4 py-2 rounded-xl"
+                  >
+                    <SettingsIcon className="w-3.5 h-3.5 mr-1.5" />
+                    Open Settings
+                  </Button>
+                )}
               </div>
             )}
             {phase === 'error' && (
