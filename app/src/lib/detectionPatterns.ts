@@ -14,6 +14,12 @@ export interface PatternMatch {
     redacted: string;
     severity: OCRSeverity;
     action: OCRAction;
+    /**
+     * Whether `type` is a claim we can stand behind. False means the label was
+     * softened to GENERIC_NUMBER_TYPE. It never affects `action` - see the note
+     * on resolveNumericType.
+     */
+    confident: boolean;
 }
 
 export interface OCRPattern {
@@ -100,6 +106,120 @@ export function isValidIban(raw: string): boolean {
     return remainder === 1;
 }
 
+// ── Aadhaar validation ──────────────────────────────────────────────────────
+
+// Verhoeff multiplication, permutation and inverse tables. UIDAI numbers carry
+// a Verhoeff check digit, which is what separates a real Aadhaar from any
+// other twelve digits - a UPI transaction id, an order number, a meter
+// reading. Without this check the shape alone is nearly meaningless.
+const VERHOEFF_D = [
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+    [1, 2, 3, 4, 0, 6, 7, 8, 9, 5],
+    [2, 3, 4, 0, 1, 7, 8, 9, 5, 6],
+    [3, 4, 0, 1, 2, 8, 9, 5, 6, 7],
+    [4, 0, 1, 2, 3, 9, 5, 6, 7, 8],
+    [5, 9, 8, 7, 6, 0, 4, 3, 2, 1],
+    [6, 5, 9, 8, 7, 1, 0, 4, 3, 2],
+    [7, 6, 5, 9, 8, 2, 1, 0, 4, 3],
+    [8, 7, 6, 5, 9, 3, 2, 1, 0, 4],
+    [9, 8, 7, 6, 5, 4, 3, 2, 1, 0],
+];
+
+const VERHOEFF_P = [
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+    [1, 5, 7, 6, 2, 8, 3, 0, 9, 4],
+    [5, 8, 0, 3, 7, 9, 6, 1, 4, 2],
+    [8, 9, 1, 6, 0, 4, 3, 5, 2, 7],
+    [9, 4, 5, 3, 1, 2, 6, 8, 7, 0],
+    [4, 2, 8, 6, 5, 7, 3, 9, 0, 1],
+    [2, 7, 9, 3, 8, 0, 6, 4, 1, 5],
+    [7, 0, 4, 6, 9, 1, 3, 2, 5, 8],
+];
+
+/** Verhoeff check over a digit string, checksum digit included. */
+export function isValidVerhoeff(digits: string): boolean {
+    if (!/^\d+$/.test(digits)) return false;
+
+    let c = 0;
+    const reversed = digits.split('').reverse();
+    for (let i = 0; i < reversed.length; i++) {
+        c = VERHOEFF_D[c][VERHOEFF_P[i % 8][Number(reversed[i])]];
+    }
+    return c === 0;
+}
+
+/**
+ * True only for twelve digits that could actually be issued as an Aadhaar:
+ * UIDAI never allocates a number starting 0 or 1, and the last digit is a
+ * Verhoeff checksum over the other eleven.
+ */
+export function isValidAadhaar(raw: string): boolean {
+    const digits = digitsOf(raw);
+    if (digits.length !== 12) return false;
+    if (digits[0] === '0' || digits[0] === '1') return false;
+    return isValidVerhoeff(digits);
+}
+
+// ── Label confidence ────────────────────────────────────────────────────────
+
+/**
+ * Shown whenever we are sure something is sensitive but not sure what it is.
+ * A wrong confident label is worse than an honest vague one: it teaches the
+ * user to distrust every label we print.
+ */
+export const GENERIC_NUMBER_TYPE = 'Sensitive Number';
+
+/** Nearby wording that names a payment or order reference. */
+const TRANSACTION_CONTEXT =
+    /(transaction\s*(id|no|ref)|txn\s*(id|no)?|\butr\b|reference\s*(no|id|number)|\bref\s*(no|id)\b|order\s*(id|no)|payment\s*(id|ref)|upi\s*(ref|id|transaction)|receipt\s*no|invoice\s*no)/i;
+
+/** Nearby wording that names an Aadhaar, including the Devanagari spelling. */
+const AADHAAR_CONTEXT = /(aadhaar|aadhar|आधार|\buid\b|\buidai\b)/i;
+
+/**
+ * Decides what to call a numeric match.
+ *
+ * Precedence, highest first:
+ *   1. Transaction wording nearby - the reported failure was a twelve-digit
+ *      UPI reference confidently labelled "Aadhaar Number", and the words
+ *      around it said exactly what it was.
+ *   2. A number that passes Aadhaar validation.
+ *   3. Anything else numeric - generic label.
+ *
+ * Aadhaar wording nearby is a strong hint but is not on its own enough to
+ * print "Aadhaar Number": OCR mangles digits, so a genuine card can fail the
+ * checksum, and a confident wrong label is the thing being fixed here. Such a
+ * match still blurs, just under the generic name.
+ *
+ * This never touches `action`. Uncertainty changes what we call something, not
+ * whether we hide it.
+ */
+export function resolveNumericType(
+    value: string,
+    fallbackType: string,
+    context: string = ''
+): { type: string; confident: boolean } {
+    const digits = digitsOf(value);
+    const haystack = `${context} ${value}`;
+
+    if (TRANSACTION_CONTEXT.test(haystack)) {
+        return { type: 'Transaction ID', confident: true };
+    }
+
+    if (digits.length === 12) {
+        if (isValidAadhaar(digits)) {
+            return { type: 'Aadhaar Number', confident: true };
+        }
+        return { type: GENERIC_NUMBER_TYPE, confident: false };
+    }
+
+    if (AADHAAR_CONTEXT.test(haystack) && isValidAadhaar(digits)) {
+        return { type: 'Aadhaar Number', confident: true };
+    }
+
+    return { type: fallbackType, confident: true };
+}
+
 // ── Context-aware number classification ─────────────────────────────────────
 
 /**
@@ -129,12 +249,14 @@ export function classifyNumberContext(
         if (/(ifsc|branch)/i.test(context)) {
             return { type: 'IFSC Code', action: 'blur' };
         }
-        return { type: 'Account / ID Number', action: 'blur' };
+        return { type: GENERIC_NUMBER_TYPE, action: 'blur' };
     }
 
-    // 12-digit numbers — very likely Aadhaar or sensitive
+    // 12-digit numbers. Aadhaar-shaped, but so is a UPI reference, so the name
+    // has to be earned by the checksum or by the wording around it.
     if (cleanDigits.length === 12) {
-        return { type: 'Aadhaar / 12-Digit ID', action: 'blur' };
+        const { type } = resolveNumericType(cleanDigits, GENERIC_NUMBER_TYPE, context);
+        return { type, action: 'blur' };
     }
 
     // 13-19 digit numbers
@@ -145,7 +267,7 @@ export function classifyNumberContext(
         if (/(transaction\s*id|txn\s*id|order\s*no|receipt\s*no|invoice\s*no)/i.test(context)) {
             return { type: 'Transaction ID', action: 'info' };
         }
-        return { type: 'Long Number (Sensitive)', action: 'blur' };
+        return { type: GENERIC_NUMBER_TYPE, action: 'blur' };
     }
 
     return null;
@@ -445,12 +567,22 @@ export function matchPatterns(blockText: string, context: string = ''): PatternM
 
             seen.add(cleanValue);
             seen.add(value);
+
+            // Numeric matches get their label re-decided; a shape alone cannot
+            // tell an Aadhaar from a transaction reference. Structural matches
+            // such as email, PAN, IFSC and IBAN keep the pattern's own name,
+            // because their format is specific enough to stand behind.
+            const { type, confident } = isNumericOnly(value)
+                ? resolveNumericType(value, pattern.type, context)
+                : { type: pattern.type, confident: true };
+
             matches.push({
-                type: pattern.type,
+                type,
                 value,
                 redacted: pattern.redact(value),
                 severity: pattern.severity,
                 action: pattern.action,
+                confident,
             });
         }
     }
