@@ -338,7 +338,7 @@ export function BlurEditorModal({ open, onClose, imageBase64, findings, appConte
             aria-modal="true"
         >
             {/* ── Top Toolbar ─────────────────────────────────────────────────── */}
-            <div className="flex-shrink-0 flex items-center justify-between px-4 py-3 bg-black/80 border-b border-white/10">
+            <div className="safe-top flex-shrink-0 flex items-center justify-between px-4 py-3 bg-black/80 border-b border-white/10">
                 <div className="flex items-center gap-2">
                     <button
                         onClick={onClose}
@@ -536,7 +536,7 @@ export function BlurEditorModal({ open, onClose, imageBase64, findings, appConte
             )}
 
             {/* ── Bottom Toolbar ───────────────────────────────────────────────── */}
-            <div className="flex-shrink-0 bg-black/80 border-t border-white/10 px-3 py-2 flex flex-col gap-2">
+            <div className="safe-bottom flex-shrink-0 bg-black/80 border-t border-white/10 px-3 py-2 flex flex-col gap-2">
                 {/* Row 1: Redaction style */}
                 <div className="flex items-center gap-1 bg-white/5 rounded-lg p-1 self-start">
                     {REDACTION_STYLES.map(option => (

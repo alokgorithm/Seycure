@@ -323,3 +323,14 @@
   background: rgba(0, 102, 255, 0.2);
   color: #1A1A2E;
 }
+
+/* The viewport is viewport-fit=cover, so the WebView draws edge to edge and
+   anything at the top would otherwise sit underneath the status bar. These
+   pad by the real inset, falling back to 0 where there is none. */
+.safe-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}

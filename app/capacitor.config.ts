@@ -16,8 +16,11 @@ const config: CapacitorConfig = {
       launchShowDuration: 500,
       backgroundColor: '#FFFFFF',
       androidScaleType: 'CENTER_CROP',
-      splashFullScreen: true,
-      splashImmersive: true,
+      // splashFullScreen and splashImmersive used to be true here. Immersive
+      // mode hides the status bar, and on Android the flag outlives the splash,
+      // so the clock, battery and signal stayed gone for the whole session.
+      splashFullScreen: false,
+      splashImmersive: false,
     }
   }
 };
