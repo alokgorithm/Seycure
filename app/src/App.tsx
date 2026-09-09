@@ -1693,7 +1693,11 @@ function PreviewCard({ analysis, onDismiss }: { analysis: LinkAnalysis; onDismis
   );
 }
 
-function LinkShield({ initialUrl }: { initialUrl?: string } = {}) {
+function LinkShield({ initialUrl, onInitialUrlConsumed }: {
+  initialUrl?: string;
+  /** Tells the parent the seed URL has been used, so it can forget it. */
+  onInitialUrlConsumed?: () => void;
+} = {}) {
   const [url, setUrl] = useState(initialUrl || '');
   const [showScanner, setShowScanner] = useState(false);
   const [analysis, setAnalysis] = useState<LinkAnalysis | null>(null);
@@ -1803,12 +1807,18 @@ function LinkShield({ initialUrl }: { initialUrl?: string } = {}) {
     }
   }, []);
 
+  // A scanned URL is a one-shot instruction, not durable state. It used to be
+  // left set on the parent after being used, and because switching tools
+  // unmounts this component, coming back re-ran this effect on the stale value
+  // and resurrected an analysis the user had already cleared. Consuming it
+  // means a remount starts empty, and re-scanning the same code still works.
   useEffect(() => {
     if (initialUrl && isValidUrl(initialUrl)) {
       setUrl(initialUrl);
       analyzeUrl(initialUrl);
+      onInitialUrlConsumed?.();
     }
-  }, [initialUrl, analyzeUrl]);
+  }, [initialUrl, analyzeUrl, onInitialUrlConsumed]);
 
   const handleQRScan = (scannedUrl: string) => {
     setUrl(scannedUrl);
@@ -3059,6 +3069,9 @@ function App() {
     setActiveTool('link');
   };
 
+  // Stable identity: LinkShield lists this in an effect dependency array.
+  const clearScannedUrl = useCallback(() => setInitialScannedUrl(''), []);
+
   return (
     <div className="min-h-screen bg-bg-light dark:bg-[#0c1017] text-text-primary dark:text-white">
       {showSplash && <SplashScreen onComplete={() => setShowSplash(false)} />}
@@ -3157,7 +3170,7 @@ function App() {
                     <X className="w-3.5 h-3.5" /> Close
                   </button>
                 </div>
-                <LinkShield initialUrl={initialScannedUrl} />
+                <LinkShield initialUrl={initialScannedUrl} onInitialUrlConsumed={clearScannedUrl} />
               </div>
             )}
 
