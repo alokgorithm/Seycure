@@ -2340,6 +2340,9 @@ function ScreenshotPrivacyGuard() {
   const [scanned, setScanned] = useState(false);
   const [scanFailed, setScanFailed] = useState(false);
   const [showEditor, setShowEditor] = useState(false);
+  // Stable identity: the editor keys its back-button effect on this, and an
+  // inline arrow would re-register the listener on every parent render.
+  const closeEditor = useCallback(() => setShowEditor(false), []);
   const [isDragging, setIsDragging] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -2754,7 +2757,7 @@ function ScreenshotPrivacyGuard() {
       {imageBase64 && (
         <BlurEditorModal
           open={showEditor}
-          onClose={() => setShowEditor(false)}
+          onClose={closeEditor}
           onToggleFinding={toggleFinding}
           onToggleAll={toggleAll}
           imageBase64={imageBase64}

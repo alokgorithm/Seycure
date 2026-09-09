@@ -113,13 +113,23 @@ export function BlurEditorModal({ open, onClose, imageBase64, findings, appConte
     // ── Android hardware back button ───────────────────────────────────────
     useEffect(() => {
         if (!open) return;
+        // addListener is async, so a cleanup that runs before the promise
+        // settles would see a null handle and remove nothing, leaking a
+        // listener on every open/close. The cancelled flag makes the late
+        // resolution clean up after itself instead.
         let listenerHandle: { remove: () => void } | null = null;
+        let cancelled = false;
         CapacitorApp.addListener('backButton', () => {
             onClose();
         }).then(handle => {
+            if (cancelled) {
+                handle.remove();
+                return;
+            }
             listenerHandle = handle;
         });
         return () => {
+            cancelled = true;
             listenerHandle?.remove();
         };
     }, [open, onClose]);
@@ -394,14 +404,25 @@ export function BlurEditorModal({ open, onClose, imageBase64, findings, appConte
             {/* ── Canvas Area ─────────────────────────────────────────────────── */}
             <div
                 ref={containerRef}
-                className="flex-1 min-h-0 overflow-auto flex items-start justify-center p-2 relative"
+                // The canvas used to be w-full h-auto, which fits the image to the
+                // container's WIDTH and lets the height run past the viewport. A
+                // portrait screenshot then rendered taller than the screen and was
+                // clipped, so you had to scroll to see the rest. That is the wrong
+                // default for a redaction tool: you cannot confirm nothing sensitive
+                // is left exposed if you cannot see the whole image at once.
+                //
+                // Now the canvas is bounded on both axes and, being a replaced
+                // element with intrinsic dimensions, scales down preserving its
+                // aspect ratio. The wrapper shrink-wraps it so the percentage-
+                // positioned region overlays still line up with the pixels.
+                className="flex-1 min-h-0 overflow-hidden flex items-center justify-center p-2 relative"
                 style={{ touchAction: 'none' }}
             >
                 {imageLoaded ? (
-                    <div className="relative inline-block w-full">
+                    <div className="relative inline-flex max-w-full max-h-full">
                         <canvas
                             ref={canvasRef}
-                            className="w-full h-auto object-contain rounded-lg"
+                            className="block max-w-full max-h-full rounded-lg"
                             style={{ cursor: mode === 'add' ? 'crosshair' : 'pointer', display: 'block' }}
                             onPointerDown={onPointerDown}
                             onPointerMove={onPointerMove}
