@@ -2414,7 +2414,7 @@ function ScreenshotPrivacyGuard() {
         'image/png',
         'Save blurred image'
       );
-      if (outcome === 'cancelled') return;
+      if (outcome === 'failed') return;
 
       await incrementScreenshotsProtected();
       setSaved(true);
@@ -2433,7 +2433,7 @@ function ScreenshotPrivacyGuard() {
     try {
       const fileName = `seycure_clean_${Date.now()}.png`;
       const outcome = await saveImage(fileName, imageBase64, 'image/png', 'Save image');
-      if (outcome === 'cancelled') return;
+      if (outcome === 'failed') return;
 
       await incrementScreenshotsProtected();
       setSaved(true);
@@ -2446,12 +2446,15 @@ function ScreenshotPrivacyGuard() {
   }, [imageBase64, incrementScreenshotsProtected]);
 
   /**
-   * Runs detection and drops straight into the editor.
+   * Runs detection and leaves the user on the summary.
    *
-   * `openEditor` is false for a rescan, where the user is already looking at
-   * the screen behind and re-opening the editor over them would be jarring.
+   * An earlier version opened the editor automatically on import. On a real
+   * device that turned out to be the wrong call: it puts a full-screen editor
+   * in front of someone who mostly wants to check the count and save, and it
+   * hides the summary that explains what was found. The editor is now reached
+   * deliberately, through "Edit blur areas".
    */
-  const runScan = useCallback(async (base64: string, openEditor = true) => {
+  const runScan = useCallback(async (base64: string) => {
     setScanning(true);
     let failed = false;
     try {
@@ -2470,14 +2473,6 @@ function ScreenshotPrivacyGuard() {
       setScanned(true);
       setScanning(false);
       setScanFailed(failed);
-      // Importing an image is the only tap: the editor opens with the
-      // detections already blurred, and saving from there needs no further
-      // decision. The summary screen stays behind it for anyone who backs out.
-      //
-      // Not after a failure though - the editor would report "no sensitive
-      // text found", which is a dangerous thing to tell someone when the scan
-      // never actually ran. They stay on the summary, which offers Scan again.
-      if (openEditor && !failed) setShowEditor(true);
     }
   }, []);
 
@@ -2744,7 +2739,7 @@ function ScreenshotPrivacyGuard() {
 
           {/* Rescan button */}
           <button
-            onClick={() => { if (imageBase64) void runScan(imageBase64, false); }}
+            onClick={() => { if (imageBase64) void runScan(imageBase64); }}
             className="w-full py-2 text-primary-blue font-sans text-xs font-medium hover:underline flex items-center justify-center gap-1"
           >
             <RefreshCw className="w-3 h-3" />

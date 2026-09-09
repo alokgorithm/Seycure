@@ -16,7 +16,7 @@ import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
 
-export type SaveOutcome = 'shared' | 'downloaded' | 'cancelled';
+export type SaveOutcome = 'saved' | 'downloaded' | 'failed';
 
 /** Strips a `data:` URL prefix if one is present. Filesystem wants raw base64. */
 function toRawBase64(data: string): string {
@@ -37,8 +37,9 @@ function downloadInBrowser(fileName: string, base64: string, mimeType: string): 
  * Writes the image to app-private cache and opens the share sheet so the user
  * can put it wherever they like. Never requests a permission.
  *
- * Returns 'cancelled' when the user dismisses the sheet, which is a normal
- * outcome and not an error - callers should not count it as a save.
+ * Returns 'failed' only when no file could be produced at all. A share sheet
+ * that opened counts as a save - see the note in the catch below for why we
+ * cannot tell a completed share from a dismissed one on Android.
  */
 export async function saveImage(
     fileName: string,
@@ -63,19 +64,32 @@ export async function saveImage(
             directory: Directory.Cache,
         });
 
-        await Share.share({ title: dialogTitle, url: uri, dialogTitle });
-        return 'shared';
+        try {
+            await Share.share({ title: dialogTitle, url: uri, dialogTitle });
+        } catch (shareError) {
+            // Android's chooser returns RESULT_CANCELED for most targets even
+            // when the user completed the share, so Capacitor rejects with
+            // "Share canceled" on saves that actually succeeded. There is no
+            // reliable way to tell the two apart from here.
+            //
+            // So a sheet that opened counts as a save. Under-counting a real
+            // save is the worse error: the user watches the number stay put
+            // after saving and concludes the app is broken. Over-counting a
+            // dismissal costs nothing, because the metered resource in the
+            // Free tier is auto-detect, not saving (CLAUDE.md §5) - when the
+            // Phase 2 quota lands it must be charged at detection time, not
+            // here.
+            console.debug('[saveImage] share sheet closed:', shareError);
+        }
+
+        return 'saved';
     } catch (error) {
-        // The Share plugin rejects when the user dismisses the sheet. That is a
-        // deliberate choice, not a failure, so report it as such.
-        if (isShareDismissal(error)) return 'cancelled';
-
-        console.error('[saveImage] native save failed, falling back to download:', error);
-        return downloadInBrowser(fileName, base64, mimeType);
+        console.error('[saveImage] could not write the file, falling back to download:', error);
+        try {
+            return downloadInBrowser(fileName, base64, mimeType);
+        } catch (downloadError) {
+            console.error('[saveImage] download fallback failed too:', downloadError);
+            return 'failed';
+        }
     }
-}
-
-function isShareDismissal(error: unknown): boolean {
-    const message = error instanceof Error ? error.message : String(error ?? '');
-    return /cancel/i.test(message) || /abort/i.test(message);
 }

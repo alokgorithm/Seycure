@@ -282,7 +282,7 @@ export function BlurEditorModal({ open, onClose, imageBase64, findings, appConte
             const fileName = `seycure_blurred_${Date.now()}.png`;
 
             const outcome = await saveImage(fileName, base64, 'image/png', 'Save blurred image');
-            if (outcome === 'cancelled') return;
+            if (outcome === 'failed') return;
 
             // Persist learning on successful save
             await persistLearning();
