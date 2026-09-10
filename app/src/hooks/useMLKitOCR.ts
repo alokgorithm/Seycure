@@ -209,7 +209,9 @@ export async function analyzeScreenshot(
                             type: classification.type,
                             value: text,
                             redacted,
-                            severity: classification.action === 'info' ? 'medium' : 'high',
+                            // classifyNumberContext only ever blurs now, so
+                            // this no longer varies.
+                            severity: 'high',
                             action: classification.action,
                             bbox: block.bbox,
                         });

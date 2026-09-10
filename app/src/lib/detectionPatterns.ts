@@ -6,6 +6,12 @@
  */
 
 export type OCRSeverity = 'critical' | 'high' | 'medium';
+/**
+ * 'info' means outlined but left readable. Detection never returns it: an
+ * uncertain match is still hidden. It exists only for a region the user
+ * deliberately switched off, which the editor outlines so they can see it was
+ * found and knowingly left alone.
+ */
 export type OCRAction = 'blur' | 'info';
 
 export interface PatternMatch {
@@ -233,13 +239,14 @@ export function classifyNumberContext(
 ): { type: string; action: OCRAction } | null {
     const cleanDigits = digitsOf(text);
 
-    // 10-digit numbers
+    // 10-digit numbers. Travel and order wording used to leave these readable.
+    // It should not: a PNR identifies a booking, and a PNR plus a surname is
+    // usually enough to open it and read the whole itinerary, change seats or
+    // cancel. A phone number one line under "Booking ID" was being exposed by
+    // the same rule. Wording picks the label; everything here is hidden.
     if (cleanDigits.length === 10) {
-        // Only skip on strong travel/order context. Tracking numbers are NOT
-        // safe: they expose delivery status and address to anyone who looks
-        // them up, so they fall through to the blur branch below.
         if (/(pnr|booking\s*id|order\s*id|flight|seat)/i.test(context)) {
-            return { type: 'Reference ID', action: 'info' };
+            return { type: 'Booking Reference', action: 'blur' };
         }
         return { type: 'Phone Number', action: 'blur' };
     }
