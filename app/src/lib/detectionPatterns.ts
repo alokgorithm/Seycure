@@ -259,15 +259,21 @@ export function classifyNumberContext(
         return { type, action: 'blur' };
     }
 
-    // 13-19 digit numbers
+    // 13-19 digit numbers. Card numbers live in exactly this range - 13 for the
+    // old Visa format, 16 for most, up to 19 for some co-branded cards - and a
+    // payment receipt prints the card and the transaction reference within a
+    // few lines of each other. Nearby wording therefore cannot be trusted to
+    // belong to the number it sits next to.
+    //
+    // So nothing in this range is ever left readable. Wording still picks the
+    // label, but the action does not move: mislabelling a card as a
+    // transaction id costs a wrong word, unblurring one costs the card.
     if (cleanDigits.length >= 13 && cleanDigits.length <= 19) {
         if (/(account|acct|a\/c|card|credit|debit|bank)/i.test(context)) {
             return { type: 'Account / Card Number', action: 'blur' };
         }
-        if (/(transaction\s*id|txn\s*id|order\s*no|receipt\s*no|invoice\s*no)/i.test(context)) {
-            return { type: 'Transaction ID', action: 'info' };
-        }
-        return { type: GENERIC_NUMBER_TYPE, action: 'blur' };
+        const { type } = resolveNumericType(cleanDigits, GENERIC_NUMBER_TYPE, context);
+        return { type, action: 'blur' };
     }
 
     return null;
