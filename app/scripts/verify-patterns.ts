@@ -51,6 +51,15 @@ const POSITIVES: PositiveCase[] = [
     { text: 'alok@okhdfcbank', expect: 'UPI / Payment ID' },
     { text: 'K1234567', expect: 'Passport Number', context: 'passport details' },
 
+    // ── Real ML Kit output ─────────────────────────────────────────────
+    // Every string below is verbatim from a device scan of
+    // assets/test_sensitive_document.png on Android 16. The clean forms above
+    // all matched while these did not, and the IFSC one shipped readable in an
+    // exported image, so they are fixtures in their own right.
+    { text: 'IFSC Code: HDFCO0O1234', expect: 'IFSC Code', note: 'OCR: zeros read as letter O' },
+    { text: 'Email: alok.nath @example.com', expect: 'Email Address', note: 'OCR: space before @' },
+    { text: 'CVW: 842', expect: 'CVV / CVC', context: 'Card Verification Value', note: 'OCR: CVV read as CVW' },
+
     // ── Cards and bank accounts ────────────────────────────────────────
     { text: '4111 1111 1111 1111', expect: 'Credit/Debit Card', note: 'Visa' },
     { text: '5500-0000-0000-0004', expect: 'Credit/Debit Card', note: 'Mastercard' },

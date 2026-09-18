@@ -377,7 +377,13 @@ export const OCR_PATTERNS: OCRPattern[] = [
         type: 'IFSC Code',
         severity: 'high',
         action: 'blur',
-        regex: /\b[A-Z]{4}0[A-Z0-9]{6}\b/g,
+        // The fifth character of an IFSC is always a zero, but OCR reads it
+        // as a capital O about as often as not: a real scan produced
+        // "HDFCO0O1234" for HDFC0001234, the strict form missed it, and a
+        // bank routing code shipped readable in an image the user believed
+        // was clean. Accepting both costs an over-blur at worst. Same
+        // reasoning as the card pattern's deliberately missing Luhn check.
+        regex: /\b[A-Z]{4}[0O][A-Z0-9]{6}\b/g,
         redact: (m) => `${m.slice(0, 4)}0******`,
     },
     {
@@ -394,7 +400,8 @@ export const OCR_PATTERNS: OCRPattern[] = [
         action: 'blur',
         regex: /\b\d{3,4}\b/g,
         redact: () => '***',
-        contextRequired: /cvv|cvc|security\s*code|card\s*verification/i,
+        // "CVW" is what OCR makes of CVV when the two Vs touch.
+        contextRequired: /cvv|cvc|cvw|security\s*code|card\s*verification/i,
     },
 
     // ── Network ────────────────────────────────────────────────────────
@@ -415,10 +422,13 @@ export const OCR_PATTERNS: OCRPattern[] = [
         type: 'Email Address',
         severity: 'high',
         action: 'blur',
-        regex: /\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b/g,
+        // One optional space either side of the @: OCR routinely splits
+        // "alok.nath@example.com" into "alok.nath @example.com", and an
+        // email left readable is the exact failure the app's pitch rules out.
+        regex: /\b[a-zA-Z0-9._%+-]+ ?@ ?[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b/g,
         redact: (m) => {
             const [user, domain] = m.split('@');
-            return `${user.slice(0, 2)}***@${domain}`;
+            return `${user.trim().slice(0, 2)}***@${domain.trim()}`;
         },
     },
     {

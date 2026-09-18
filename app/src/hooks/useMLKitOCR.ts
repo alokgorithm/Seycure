@@ -231,9 +231,16 @@ export async function analyzeScreenshot(
                 seenValues.add(cleanValue);
                 seenValues.add(match.value);
 
-                const key = bboxKey(block.bbox);
-                if (seenBboxes.has(key)) continue;
-                seenBboxes.add(key);
+                // One OCR block routinely holds two sensitive values - a real
+                // scan put "UPI ID: ... / Card: ..." and "Password: ... / PIN
+                // Code: ..." in single blocks. Keying off the block bbox let
+                // only the first of each pair become a finding and silently
+                // dropped the second. The blur happens to cover both today
+                // because a region is the whole block, so the loss shows up as
+                // an undercount rather than a leak - but the moment regions get
+                // tighter than a block it becomes one. Every match is its own
+                // finding; `seenValues` still stops the same value twice.
+                seenBboxes.add(bboxKey(block.bbox));
 
                 findings.push({
                     id: nextFindingId(),
