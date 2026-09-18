@@ -75,6 +75,12 @@ interface LinkAnalysis {
   domainAgeDays?: number | null;
   phishingSignals?: PhishingSignal[];
   redirectChain?: { url: string; status: number }[];
+  /**
+   * The link redirects somewhere we could not pin down, so the Safe Browsing
+   * verdict on this card describes the redirector and not where the user
+   * actually lands. Suppresses the green badge - see the threat status block.
+   */
+  destinationUnknown?: boolean;
 }
 
 // Tracker parameter library
@@ -117,13 +123,35 @@ const TRACKER_PARAMS: TrackerParam[] = [
   { name: 'trkInfo', category: 'Generic' },
 ];
 
-// Shortener domains
+// Known shorteners. This is only a *hint*, used to show "Resolving
+// destination..." before the network answers - it is never the decision.
+// A list cannot keep up: sl1nk.com was absent, so a link that redirected to a
+// different site was presented as an ordinary destination with a green "Safe"
+// badge describing the wrong domain. The redirect chain from /resolve is the
+// real test, and it needs no list at all. Entries must be lowercase; the old
+// list carried 'DwarfURL.com', which could never match a lowercased domain,
+// alongside half a dozen services that shut down years ago.
 const SHORTENER_DOMAINS = [
-  'bit.ly', 't.co', 'tinyurl.com', 'ow.ly', 'buff.ly',
-  'goo.gl', 'short.link', 'is.gd', 'cli.gs', 'pic.gd',
-  'DwarfURL.com', 'ow.ly', 'yfrog.com', 'migre.me', 'ff.im',
-  'tiny.cc', 'url4.eu', 'tr.im'
+  'bit.ly', 't.co', 'tinyurl.com', 'ow.ly', 'buff.ly', 'goo.gl',
+  'is.gd', 'tiny.cc', 'rb.gy', 'cutt.ly', 'shorturl.at', 'rebrand.ly',
+  's.id', 'linktr.ee', 'shorte.st', 'sl1nk.com', 'short.link', 'v.gd',
+  't.ly', 'bl.ink', 'lnkd.in', 'trib.al', 'urlz.fr', 'clck.ru',
 ];
+
+/**
+ * Does this URL look like it is still pointing at a redirector rather than a
+ * destination? Some shorteners answer with an interstitial page that works the
+ * real target out in JavaScript - sl1nk.com hands back
+ * encurtador.dev/redirecionamento/..., and no amount of following HTTP hops
+ * reaches the actual site, because the last hop never happens over HTTP.
+ * Matching here is a heuristic, and it is deliberately used only to admit
+ * we do not know the destination, never to accuse the link of anything.
+ */
+function looksLikeRedirector(url: string): boolean {
+  const domain = getDomainFromUrl(url);
+  if (SHORTENER_DOMAINS.some(s => domain === s || domain.endsWith(`.${s}`))) return true;
+  return /\/(redirecionamento|redirect|goto|out|away|linkout)\b/i.test(url);
+}
 
 // Dangerous file extensions
 const DANGEROUS_EXTENSIONS: Record<string, 'critical' | 'high' | 'medium' | 'low'> = {
@@ -1248,7 +1276,8 @@ function PreviewCard({ analysis, onDismiss }: { analysis: LinkAnalysis; onDismis
 
   const risk = riskConfig[analysis.fileRisk];
   const hasPhishing = !!(analysis.phishingSignals && analysis.phishingSignals.length > 0);
-  const isClean = !hasPhishing && threatStatus === 'safe' && risk === null;
+  const isClean = !hasPhishing && threatStatus === 'safe' && risk === null
+    && !analysis.destinationUnknown;
 
   const handleOpenLink = (url: string) => {
     if (analysis.category.filterType === 'block' || analysis.category.filterType === 'warn') {
@@ -1408,12 +1437,31 @@ function PreviewCard({ analysis, onDismiss }: { analysis: LinkAnalysis; onDismis
               </div>
             )}
 
-            {/* Threat status */}
-            {threatStatus === 'safe' && (
+            {/* Threat status.
+                The verdict is fetched for the URL the user pasted. When that
+                URL redirects somewhere we could not pin down, the verdict says
+                nothing about where they actually land, so the green badge is
+                withheld rather than shown over the wrong domain. A scan of
+                sl1nk.com once reported "Safe - No Threats Detected" while the
+                real destination was never checked at all. */}
+            {threatStatus === 'safe' && !analysis.destinationUnknown && (
               <div className="flex items-center gap-2 px-3 py-2 bg-success-green/5 border border-success-green/20 rounded-lg">
                 <ShieldCheck className="w-4 h-4 text-success-green" />
                 <span className="font-sans text-xs font-medium text-success-green">No Threats Detected</span>
                 <span className="font-sans text-[10px] text-text-muted ml-auto">Google Safe Browsing + local analysis clear</span>
+              </div>
+            )}
+
+            {threatStatus === 'safe' && analysis.destinationUnknown && (
+              <div className="flex items-start gap-2 px-3 py-2 bg-warning-amber/10 border border-warning-amber/30 rounded-lg">
+                <AlertTriangle className="w-4 h-4 text-warning-amber shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-sans text-xs font-medium text-warning-amber">Destination not verified</p>
+                  <p className="font-sans text-[10px] text-warning-amber/80 mt-0.5">
+                    This link forwards through a redirector that hides where it ends up.
+                    {' '}<span className="font-medium">{analysis.domain}</span> is clear, but we could not check the page you would land on.
+                  </p>
+                </div>
               </div>
             )}
 
@@ -1801,20 +1849,45 @@ function LinkShield({ initialUrl, onInitialUrlConsumed }: {
       // metadata call so one failing does not suppress the other; the previous
       // version nested this inside the fetch above and read the wrong shape off
       // /redirects, so the resolved URL never actually appeared.
-      if (isShort) {
-        fetch(`${SAFE_BROWSING_WORKER_URL}/resolve?url=${encodeURIComponent(value)}`, {
-          signal: AbortSignal.timeout(10000),
+      // Resolve every link, not just ones on the shortener list. The list was
+      // the gate here, so a redirector missing from it - sl1nk.com, say - was
+      // never resolved at all, and the card went on to describe the redirector
+      // as though it were the destination. Any link can redirect, so ask about
+      // all of them and let the answer decide.
+      fetch(`${SAFE_BROWSING_WORKER_URL}/resolve?url=${encodeURIComponent(value)}`, {
+        signal: AbortSignal.timeout(10000),
+      })
+        .then(r => r.json())
+        .then((data: any) => {
+          const finalUrl: string | undefined = data?.finalUrl;
+          const hopped = Boolean(finalUrl && finalUrl !== value);
+
+          // Two ways the destination stays unknown: the trail ends on another
+          // redirector, which hands off in JavaScript that nothing
+          // server-side can follow; or we had reason to expect a redirect and
+          // got nowhere. A hop to an ordinary page is a known destination -
+          // it is shown to the user, so the card is not claiming anything it
+          // cannot back up.
+          const destinationUnknown = hopped
+            ? looksLikeRedirector(finalUrl as string)
+            : isShort;
+
+          setAnalysis(prev => prev ? {
+            ...prev,
+            resolvedUrl: hopped ? finalUrl : prev.resolvedUrl,
+            // A hop off the original domain makes this a redirector whatever
+            // the list says.
+            isShortener: prev.isShortener || hopped,
+            destinationUnknown,
+          } : prev);
         })
-          .then(r => r.json())
-          .then((data: any) => {
-            if (data?.finalUrl && data.finalUrl !== value) {
-              setAnalysis(prev => prev ? { ...prev, resolvedUrl: data.finalUrl } : prev);
-            }
-          })
-          .catch(() => {
-            // Leave resolvedUrl unset; the UI treats that as "not resolved"
-          });
-      }
+        .catch(() => {
+          // Network failure: if we had reason to think it redirects, say the
+          // destination is unknown rather than quietly implying it is fine.
+          if (isShort) {
+            setAnalysis(prev => prev ? { ...prev, destinationUnknown: true } : prev);
+          }
+        });
 
       // Phase 3: Domain Age (RDAP)
       const rootDomain = domain.split('.').slice(-2).join('.');
