@@ -261,16 +261,22 @@ needs a physical device**.*
    and the preview card shows a title.
 6. Scan a QR code; confirm the camera permission prompt still appears.
 
-Then deploy the Worker (`cd worker && npx wrangler deploy`) — `/resolve` and
-`/title` are only on the local build so far, so Link Shield will fall back to
-its instant local analysis until you do.
+The Worker is deployed and live; verified 2026-09-18 against
+`seycure-safe-browsing.arka-cmd.workers.dev` — `/stats` reports healthy,
+`/resolve` follows a shortener chain to its destination, `/title` returns a
+title. Link Shield is not falling back to local-only analysis and no deploy
+step is outstanding. Redeploy with `cd worker && npx wrangler deploy` after any
+change under `worker/`.
 
-**Phase 1 — Reposition around Privacy Blur.** *Landed ahead of Phase 0 on
-`phase-1-privacy-blur`, against the "work in order" rule above, so it has never
-been checked on a device with the Phase 0 changes in place. Fold its checks into
-the device pass listed under Phase 0.* App opens directly into Privacy
-Blur with a visible "Pick a screenshot" action; other modes become secondary
-tabs. Run OCR and detection immediately on import with no extra tap. Show a count
+**Phase 1 — Reposition around Privacy Blur.** *Written ahead of Phase 0 on
+`phase-1-privacy-blur`, against the "work in order" rule above. Those commits
+were later rewritten onto `phase-0-policy` and are all present there under new
+hashes, so that branch is superseded, not pending; `backup/phase-0-policy-pre-rewrite`
+holds the pre-rewrite history. The work still has never been checked on a device
+with the Phase 0 changes in place, so fold its checks into the device pass listed
+under Phase 0.* App opens directly into Privacy Blur with a visible "Pick a
+screenshot" action; other modes become secondary tabs. Run OCR and detection
+immediately on import with no extra tap. Show a count
 ("Found 4 sensitive items") — that sentence is the product. Make every detection
 individually toggleable plus a blur-all action. Add a redaction style toggle:
 blur, pixelate, solid black bar. Verify patterns against real Indian and
