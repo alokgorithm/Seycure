@@ -1,16 +1,23 @@
 ext {
-    minSdkVersion = 22
-    compileSdkVersion = 34
-    targetSdkVersion = 34
-    androidxActivityVersion = '1.7.0'
-    androidxAppCompatVersion = '1.6.1'
-    androidxCoordinatorLayoutVersion = '1.2.0'
-    androidxCoreVersion = '1.10.0'
-    androidxFragmentVersion = '1.5.6'
-    coreSplashScreenVersion = '1.0.0'
-    androidxWebkitVersion = '1.6.1'
+    // minSdk 24 is Capacitor 8's floor, up from 22. That drops Android 5.0 and
+    // 5.1, which is well under 1% of devices and none of them run the Android
+    // 13+ this app is tested against.
+    minSdkVersion = 24
+    // API 36 (Android 16). Play has required it for new submissions since
+    // 2026-08-31, so anything lower cannot be published at all. See CLAUDE.md §7.
+    compileSdkVersion = 36
+    targetSdkVersion = 36
+    // Versions below track what Capacitor 8.5.2 ships as its own defaults;
+    // keep them in step when Capacitor moves.
+    androidxActivityVersion = '1.11.0'
+    androidxAppCompatVersion = '1.7.1'
+    androidxCoordinatorLayoutVersion = '1.3.0'
+    androidxCoreVersion = '1.17.0'
+    androidxFragmentVersion = '1.8.9'
+    coreSplashScreenVersion = '1.0.1'
+    androidxWebkitVersion = '1.14.0'
     junitVersion = '4.13.2'
-    androidxJunitVersion = '1.1.5'
-    androidxEspressoCoreVersion = '3.5.1'
+    androidxJunitVersion = '1.2.1'
+    androidxEspressoCoreVersion = '3.6.1'
     cordovaAndroidVersion = '10.1.1'
 }

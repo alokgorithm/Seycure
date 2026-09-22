@@ -41,8 +41,13 @@ anything works until you have seen it run.
 **Frontend:** React 18, TypeScript, Vite 7, shadcn/ui + vanilla CSS, Lucide icons.
 **Libraries:** `exifr` (EXIF), `html5-qrcode` (QR + WebRTC zoom), `pdf-lib` (PDF
 metadata), `jszip` (DOCX metadata).
-**Native bridge:** Capacitor v6 — `@capacitor/share`, `@capacitor/filesystem`,
+**Native bridge:** Capacitor v8 — `@capacitor/share`, `@capacitor/filesystem`,
 `@capacitor/app`, `@capacitor/preferences`. Google ML Kit for on-device OCR.
+Android build: compileSdk/targetSdk 36, minSdk 24, AGP 8.13, Gradle 8.13,
+Java 21. Capacitor 8's plugins apply the Kotlin Android plugin, which wants a
+JDK 21 toolchain - if Gradle cannot find one, point
+`org.gradle.java.installations.paths` in your *user* `~/.gradle/gradle.properties`
+at a real JDK 21, not at the repo.
 **Backend:** Cloudflare Worker (`seycure-safe-browsing`) as an edge proxy, with
 KV cache, request coalescing, batching, and per-IP rate limiting. Endpoints:
 
@@ -70,7 +75,7 @@ worker/        Cloudflare Worker (wrangler)
 **Build commands:**
 
 ```bash
-cd app && npm install --legacy-peer-deps
+cd app && npm install
 npm run dev                    # web dev server
 npm run build && npx cap sync android
 cd android && ./gradlew assembleDebug
@@ -209,7 +214,14 @@ that images and documents never leave the device. Being caught under-declaring i
 far worse than declaring accurately.
 
 **Other requirements:** privacy policy at a public URL, content rating
-questionnaire, target API level 35, signed app bundle.
+questionnaire, **target API level 36**, signed app bundle.
+
+API 36 is not a nice-to-have. Since **2026-08-31** Play has required new apps
+and updates to target Android 16 (API 36); API 35 is only the floor for apps
+already published to stay visible to new users. That deadline has passed, so a
+build targeting anything lower cannot be submitted at all. An extension to
+2026-11-01 can be requested in Play Console, but only for apps already on the
+store, which this is not.
 
 ## 8. Quality bar
 
