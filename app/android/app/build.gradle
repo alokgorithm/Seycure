@@ -68,6 +68,13 @@ dependencies {
     implementation project(':capacitor-cordova-android-plugins')
     implementation 'com.google.mlkit:text-recognition:16.0.1'
 
+    // On-device PDF decryption for Media Scrubber. pdf-lib, used everywhere
+    // else in the PDF path, opens an encrypted file but cannot decrypt it, so
+    // the standard security handlers have to come from native code. PDFBox is
+    // the mature option on Android; it brings font and CMap resources with it,
+    // which is most of the APK size it adds.
+    implementation 'com.tom-roush:pdfbox-android:2.0.27.0'
+
     // Crash reporting only. The BoM keeps the Firebase versions consistent;
     // adding any other firebase-* artifact here needs a policy decision first,
     // because it changes what the Play Data Safety form has to declare.

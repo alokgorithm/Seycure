@@ -25,3 +25,10 @@
 -keep class org.apache.cordova.** { *; }
 -dontwarn com.getcapacitor.**
 -dontwarn org.apache.cordova.**
+
+# PDFBox (pdfbox-android) references the optional JPEG-2000 codec
+# com.gemalto.jp2, which we do not ship: the PDF path only decrypts documents
+# and strips metadata, and never decodes image streams. R8 treats the dangling
+# reference as a hard error and fails the release build, while the debug build
+# passes, so this surfaces only when producing an app bundle.
+-dontwarn com.gemalto.jp2.**
