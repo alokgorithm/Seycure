@@ -250,7 +250,7 @@ function fileToBase64(file: File): Promise<string> {
 // Components
 function TopBar({ onOpenMenu }: { onOpenMenu: () => void }) {
   return (
-    <div className="flex items-center justify-between px-5 py-3.5 bg-white dark:bg-[#0c1017] border-b border-border-light dark:border-white/10 shadow-xs sticky top-0 z-30">
+    <div className="safe-top-bar flex items-center justify-between px-5 pb-3.5 bg-white dark:bg-[#0c1017] border-b border-border-light dark:border-white/10 shadow-xs sticky top-0 z-30">
       <div className="flex items-center gap-2.5">
         <img src="/logo.png" alt="Seycure" className="w-8 h-8 object-contain rounded-xl shadow-xs" />
         <div className="flex items-center gap-2">
@@ -3176,7 +3176,7 @@ function App() {
   const clearScannedUrl = useCallback(() => setInitialScannedUrl(''), []);
 
   return (
-    <div className="min-h-screen safe-top safe-bottom bg-bg-light dark:bg-[#0c1017] text-text-primary dark:text-white">
+    <div className="min-h-screen safe-bottom bg-bg-light dark:bg-[#0c1017] text-text-primary dark:text-white">
       {showSplash && <SplashScreen onComplete={() => setShowSplash(false)} />}
 
       <div className="max-w-app mx-auto min-h-screen flex flex-col">

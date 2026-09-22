@@ -331,6 +331,19 @@
   padding-top: env(safe-area-inset-top, 0px);
 }
 
+/* A sticky top bar has to carry the inset itself. `position: sticky` pins to
+   the scrollport, not to an ancestor's padding box, so an inset applied to a
+   wrapper scrolls away and leaves the bar sitting under the status bar. That
+   was invisible until the app targeted API 36, where Android 15+ forces
+   edge-to-edge and the inset stops being zero: the header then collided with
+   the clock and battery as soon as you scrolled.
+
+   0.875rem is Tailwind's py-3.5, the bar's own vertical padding; keep the two
+   in step if that changes. */
+.safe-top-bar {
+  padding-top: calc(env(safe-area-inset-top, 0px) + 0.875rem);
+}
+
 .safe-bottom {
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
