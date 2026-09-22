@@ -13,6 +13,7 @@
  * refund re-locks. Callers should keep using isProUnlocked() and nothing else.
  */
 import { Preferences } from '@capacitor/preferences';
+import { isDebugBuild } from '@/hooks/usePdfUnlock';
 
 const PRO_KEY = 'seycure_pro_unlocked';
 
@@ -32,4 +33,19 @@ export async function isProUnlocked(): Promise<boolean> {
  */
 export async function setProUnlocked(unlocked: boolean): Promise<void> {
     await Preferences.set({ key: PRO_KEY, value: unlocked ? 'true' : 'false' });
+}
+
+/**
+ * Whether PDF unlocking is available.
+ *
+ * Pro or a debug build, and nothing else. In a release build isProUnlocked()
+ * is false for everyone until Phase 2 writes the key, so release fails closed;
+ * the debug arm exists only so the feature can be tested on a device before
+ * then. There is deliberately no flag, query parameter or stored value that
+ * opens this in a release build - if one existed, it would be the first thing
+ * worth abusing.
+ */
+export async function canUnlockPdfs(): Promise<boolean> {
+    if (await isDebugBuild()) return true;
+    return isProUnlocked();
 }

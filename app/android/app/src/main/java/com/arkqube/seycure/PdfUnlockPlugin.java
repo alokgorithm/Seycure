@@ -39,6 +39,24 @@ public class PdfUnlockPlugin extends Plugin {
      */
     private static final int MAX_PDF_BYTES = 25 * 1024 * 1024;
 
+    /**
+     * Whether this is a debug build.
+     *
+     * The web bundle is compiled in production mode even for a debug APK, so
+     * import.meta.env.DEV is false there and cannot answer this. BuildConfig
+     * can, and it is set by the build rather than by anything shipped, so a
+     * release build cannot be talked into reporting true.
+     *
+     * This exists so the feature can be exercised on a device before Phase 2
+     * makes a real entitlement possible. It never unlocks a release build.
+     */
+    @PluginMethod
+    public void isDebugBuild(PluginCall call) {
+        JSObject result = new JSObject();
+        result.put("debug", BuildConfig.DEBUG);
+        call.resolve(result);
+    }
+
     /** Reports whether a file needs a password, so the UI can ask only when it must. */
     @PluginMethod
     public void isEncrypted(PluginCall call) {
@@ -121,6 +139,22 @@ public class PdfUnlockPlugin extends Plugin {
             // back out and the copy is still locked.
             document.setAllSecurityToBeRemoved(true);
 
+            // Report what was there before clearing it. The unencrypted path
+            // lists every field it strips, and an encrypted file should not
+            // tell the user less just because the work happened out here -
+            // after this pass pdf-lib sees a clean document and has nothing
+            // left to report.
+            JSObject found = new JSObject();
+            PDDocumentInformation info = document.getDocumentInformation();
+            if (info != null) {
+                putIfPresent(found, "title", info.getTitle());
+                putIfPresent(found, "author", info.getAuthor());
+                putIfPresent(found, "subject", info.getSubject());
+                putIfPresent(found, "creator", info.getCreator());
+                putIfPresent(found, "producer", info.getProducer());
+                putIfPresent(found, "keywords", info.getKeywords());
+            }
+
             document.setDocumentInformation(new PDDocumentInformation());
             document.getDocumentCatalog().setMetadata(null);
 
@@ -129,6 +163,7 @@ public class PdfUnlockPlugin extends Plugin {
 
             JSObject result = new JSObject();
             result.put("base64", Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP));
+            result.put("strippedInfo", found);
             call.resolve(result);
         } catch (InvalidPasswordException e) {
             // The one failure the user can do something about, so it gets its
@@ -144,6 +179,12 @@ public class PdfUnlockPlugin extends Plugin {
             call.reject("Could not unlock the PDF: " + e.getMessage());
         } finally {
             closeQuietly(document);
+        }
+    }
+
+    private void putIfPresent(JSObject target, String key, String value) {
+        if (value != null && !value.trim().isEmpty()) {
+            target.put(key, value);
         }
     }
 

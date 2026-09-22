@@ -34,6 +34,9 @@ import { BlurEditorModal } from '@/components/BlurEditorModal';
 import { renderToCanvas, findingsToBlurRegions } from '@/hooks/useBlurEditor';
 import { LearnedRulesSettings } from '@/components/LearnedRulesSettings';
 import { classifyLink, type CategoryResult } from '@/hooks/useLinkClassifier';
+import { isPdfEncrypted, unlockPdf, PdfUnlockError } from '@/hooks/usePdfUnlock';
+import { canUnlockPdfs } from '@/lib/entitlements';
+import { PdfPasswordModal } from '@/components/PdfPasswordModal';
 import { checkPhishingSignals, type PhishingSignal } from '@/hooks/usePhishingDetector';
 
 // Types
@@ -48,9 +51,11 @@ interface FileCard {
   id: string;
   name: string;
   type: 'image' | 'video' | 'document';
-  status: 'scanning' | 'clean';
+  /** 'locked' is an encrypted PDF we did not unlock: cancelled, or Pro-gated. */
+  status: 'scanning' | 'clean' | 'locked';
+  lockedReason?: 'cancelled' | 'pro-required' | 'failed';
   metadata: {
-    type: 'gps' | 'device' | 'software' | 'author' | 'title' | 'producer' | 'company' | 'none';
+    type: 'gps' | 'device' | 'software' | 'author' | 'title' | 'producer' | 'company' | 'password' | 'none';
     value: string;
   }[];
   base64Data?: string;
@@ -2014,6 +2019,25 @@ function LinkShield({ initialUrl, onInitialUrlConsumed }: {
 
 function MediaScrubber() {
   const [files, setFiles] = useState<FileCard[]>([]);
+
+  /**
+   * The password prompt is driven from inside processFile, which is async, so
+   * it hands over a resolver and awaits it. `resolve(null)` is a cancel.
+   */
+  const [passwordPrompt, setPasswordPrompt] = useState<{
+    fileName: string;
+    error: string | null;
+    busy: boolean;
+    resolve: (password: string | null) => void;
+  } | null>(null);
+
+  const askForPassword = useCallback(
+    (fileName: string, error: string | null) =>
+      new Promise<string | null>(resolve => {
+        setPasswordPrompt({ fileName, error, busy: false, resolve });
+      }),
+    []
+  );
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { shareFile: nativeShare } = useNativeShare();
@@ -2120,9 +2144,93 @@ function MediaScrubber() {
 
       // ── PDF metadata processing ───────────────────────────────────────
       if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
+        // A protected PDF has to be decrypted before anything can read it.
+        // pdf-lib opens one with ignoreEncryption but cannot decrypt it, so
+        // the bytes below would be unreadable and the "cleaned" copy broken.
+        // The native PDFBox plugin returns a decrypted, metadata-stripped
+        // copy, and the rest of this branch then runs on that.
+        let pdfBase64 = base64Data;
+        let wasUnlocked = false;
+
+        if (await isPdfEncrypted(base64Data)) {
+          if (!(await canUnlockPdfs())) {
+            setFiles(prev => prev.map(f =>
+              f.id === newFile.id
+                ? { ...f, status: 'locked' as const, lockedReason: 'pro-required' as const }
+                : f
+            ));
+            return;
+          }
+
+          let lastError: string | null = null;
+          // Loops because a wrong password is the expected case, not a
+          // failure: the user gets to try again without losing the file.
+          for (;;) {
+            const password = await askForPassword(file.name, lastError);
+            if (password === null) {
+              setPasswordPrompt(null);
+              setFiles(prev => prev.map(f =>
+                f.id === newFile.id
+                  ? { ...f, status: 'locked' as const, lockedReason: 'cancelled' as const }
+                  : f
+              ));
+              return;
+            }
+
+            setPasswordPrompt(prev => prev ? { ...prev, busy: true } : prev);
+            try {
+              const unlocked = await unlockPdf(base64Data, password);
+              pdfBase64 = unlocked.base64;
+              wasUnlocked = true;
+
+              // The unlock already cleared these, so pdf-lib below will find a
+              // clean document and report nothing. List them here or the user
+              // is told an encrypted file carried no metadata when it did.
+              const info = unlocked.strippedInfo;
+              if (info.author) metadata.push({ type: 'author', value: info.author });
+              if (info.title) metadata.push({ type: 'title', value: info.title });
+              if (info.subject) metadata.push({ type: 'title', value: `Subject: ${info.subject}` });
+              if (info.creator) metadata.push({ type: 'producer', value: `Creator: ${info.creator}` });
+              if (info.producer) metadata.push({ type: 'producer', value: `Producer: ${info.producer}` });
+              if (info.keywords) metadata.push({ type: 'software', value: `Keywords: ${info.keywords}` });
+
+              setPasswordPrompt(null);
+              break;
+            } catch (err) {
+              if (err instanceof PdfUnlockError && err.code === 'WRONG_PASSWORD') {
+                lastError = err.message;
+                continue;
+              }
+              setPasswordPrompt(null);
+              setFiles(prev => prev.map(f =>
+                f.id === newFile.id
+                  ? { ...f, status: 'locked' as const, lockedReason: 'failed' as const }
+                  : f
+              ));
+              return;
+            }
+          }
+        }
+
         try {
-          const arrayBuffer = await file.arrayBuffer();
-          const pdfDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
+          // Read from the decrypted copy when there is one; `file` still holds
+          // the original encrypted bytes, and the original is never modified.
+          const arrayBuffer = wasUnlocked
+            ? Uint8Array.from(atob(pdfBase64), c => c.charCodeAt(0)).buffer
+            : await file.arrayBuffer();
+          // updateMetadata defaults to true, which makes pdf-lib stamp its own
+          // name into Creator and Producer as the document loads. The scrubber
+          // then reads that back and reports "Producer stripped: pdf-lib" for a
+          // file that never contained it - telling the user we removed
+          // something they never had.
+          const pdfDoc = await PDFDocument.load(arrayBuffer, {
+            ignoreEncryption: true,
+            updateMetadata: false,
+          });
+
+          if (wasUnlocked) {
+            metadata.push({ type: 'password', value: 'Password removed' });
+          }
 
           // Read metadata
           const title = pdfDoc.getTitle();
@@ -2330,6 +2438,8 @@ function MediaScrubber() {
         return 'bg-cyan-500/10 text-cyan-600 border-cyan-300';
       case 'company':
         return 'bg-orange-500/10 text-orange-600 border-orange-300';
+      case 'password':
+        return 'bg-primary-blue/10 text-primary-blue border-primary-blue/30';
       default:
         return 'bg-success-green/10 text-success-green border-success-green/30';
     }
@@ -2351,6 +2461,8 @@ function MediaScrubber() {
         return <FileText className="w-3 h-3" />;
       case 'company':
         return <Building2 className="w-3 h-3" />;
+      case 'password':
+        return <Lock className="w-3 h-3" />;
       default:
         return <Check className="w-3 h-3" />;
     }
@@ -2358,12 +2470,25 @@ function MediaScrubber() {
 
   const getBadgeText = (m: FileCard['metadata'][0]) => {
     if (m.type === 'none') return 'No sensitive metadata found';
+    // Every other type names a field and then the value it held. A removed
+    // password has no value to show - and must not have one - so it reads as
+    // a statement rather than "Password stripped · Password removed".
+    if (m.type === 'password') return m.value;
     const prefix = m.type.charAt(0).toUpperCase() + m.type.slice(1);
     return `${prefix} stripped · ${m.value}`;
   };
 
   return (
     <div className="space-y-4 p-4">
+      <PdfPasswordModal
+        open={passwordPrompt !== null}
+        fileName={passwordPrompt?.fileName ?? ''}
+        error={passwordPrompt?.error ?? null}
+        busy={passwordPrompt?.busy ?? false}
+        onSubmit={password => passwordPrompt?.resolve(password)}
+        onCancel={() => passwordPrompt?.resolve(null)}
+      />
+
       {/* Drop Zone */}
       <div
         onDrop={handleDrop}
@@ -2402,16 +2527,32 @@ function MediaScrubber() {
             <div className="flex items-center gap-3">
               <div className={`w-2 h-2 rounded-full ${file.status === 'scanning'
                 ? 'bg-warning-amber animate-pulse-dot'
-                : 'bg-success-green'
+                : file.status === 'locked'
+                  ? 'bg-text-muted'
+                  : 'bg-success-green'
                 }`} />
               <div className="flex-1 min-w-0">
                 <p className="font-sans text-sm font-medium text-text-primary truncate">{file.name}</p>
               </div>
-              <span className={`font-sans text-xs font-medium ${file.status === 'scanning' ? 'text-warning-amber' : 'text-success-green'
+              <span className={`font-sans text-xs font-medium ${file.status === 'scanning'
+                ? 'text-warning-amber'
+                : file.status === 'locked' ? 'text-text-muted' : 'text-success-green'
                 }`}>
-                {file.status === 'scanning' ? 'Scanning' : 'Clean'}
+                {file.status === 'scanning' ? 'Scanning' : file.status === 'locked' ? 'Locked' : 'Clean'}
               </span>
             </div>
+
+            {/* A locked file produced no cleaned copy, so say why rather than
+                leaving a card that looks like it simply failed. */}
+            {file.status === 'locked' && (
+              <p className="mt-2 font-sans text-xs text-text-secondary">
+                {file.lockedReason === 'pro-required'
+                  ? 'Password-protected PDF. Unlocking is a Pro feature.'
+                  : file.lockedReason === 'failed'
+                    ? 'This PDF could not be unlocked. The original is unchanged.'
+                    : 'Left locked. The original is unchanged.'}
+              </p>
+            )}
 
             {file.status === 'clean' && file.metadata.length > 0 && (
               <div className="mt-3 flex flex-wrap gap-2">
@@ -3197,6 +3338,7 @@ function App() {
   return (
     <div className="min-h-screen safe-bottom bg-bg-light dark:bg-[#0c1017] text-text-primary dark:text-white">
       {showSplash && <SplashScreen onComplete={() => setShowSplash(false)} />}
+
 
       <div className="max-w-app mx-auto min-h-screen flex flex-col">
         <TopBar onOpenMenu={() => setShowSettings(true)} />

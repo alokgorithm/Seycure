@@ -12,6 +12,14 @@ if (keystorePropertiesFile.exists()) {
 android {
     namespace "com.arkqube.seycure"
     compileSdkVersion rootProject.ext.compileSdkVersion
+    // AGP 8 stopped generating BuildConfig unless asked. PdfUnlockPlugin
+    // reads BuildConfig.DEBUG to decide whether PDF unlocking is available
+    // before Phase 2 exists, and that has to come from the build rather than
+    // from anything shipped in the web bundle, which is compiled in
+    // production mode even inside a debug APK.
+    buildFeatures {
+        buildConfig true
+    }
     defaultConfig {
         applicationId "com.arkqube.seycure"
         minSdkVersion rootProject.ext.minSdkVersion
