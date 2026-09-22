@@ -1444,7 +1444,7 @@ function PreviewCard({ analysis, onDismiss }: { analysis: LinkAnalysis; onDismis
                 withheld rather than shown over the wrong domain. A scan of
                 sl1nk.com once reported "Safe - No Threats Detected" while the
                 real destination was never checked at all. */}
-            {threatStatus === 'safe' && !analysis.destinationUnknown && (
+            {threatStatus === 'safe' && (
               <div className="flex items-center gap-2 px-3 py-2 bg-success-green/5 border border-success-green/20 rounded-lg">
                 <ShieldCheck className="w-4 h-4 text-success-green" />
                 <span className="font-sans text-xs font-medium text-success-green">No Threats Detected</span>
@@ -1452,18 +1452,6 @@ function PreviewCard({ analysis, onDismiss }: { analysis: LinkAnalysis; onDismis
               </div>
             )}
 
-            {threatStatus === 'safe' && analysis.destinationUnknown && (
-              <div className="flex items-start gap-2 px-3 py-2 bg-warning-amber/10 border border-warning-amber/30 rounded-lg">
-                <AlertTriangle className="w-4 h-4 text-warning-amber shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-sans text-xs font-medium text-warning-amber">Destination not verified</p>
-                  <p className="font-sans text-[10px] text-warning-amber/80 mt-0.5">
-                    This link forwards through a redirector that hides where it ends up.
-                    {' '}<span className="font-medium">{analysis.domain}</span> is clear, but we could not check the page you would land on.
-                  </p>
-                </div>
-              </div>
-            )}
 
             {/* Domain Age */}
             {analysis.domainAgeDays !== undefined && (
@@ -1502,8 +1490,21 @@ function PreviewCard({ analysis, onDismiss }: { analysis: LinkAnalysis; onDismis
                 <div className="px-3 py-2 bg-warning-amber/10 border border-warning-amber/30 rounded-lg">
                   <p className="font-sans text-xs font-medium text-warning-amber flex items-center gap-2">
                     <AlertTriangle className="w-3 h-3" />
-                    Shortened URL {analysis.resolvedUrl ? '— Resolved' : '— Resolving Destination'}
+                    Shortened URL {analysis.destinationUnknown
+                      ? '— Destination Unknown'
+                      : analysis.resolvedUrl ? '— Resolved' : '— Resolving Destination'}
                   </p>
+                  {/* Calling a hop onto a second redirector "Resolved" claims
+                      more than we know. The last hop we can see is still worth
+                      showing - it is where the link goes next - but the page
+                      the user lands on is not this one, and the safety check
+                      on this card was run against the link they pasted. */}
+                  {analysis.destinationUnknown && analysis.resolvedUrl && (
+                    <p className="font-sans text-[10px] text-warning-amber/80 mt-1 ml-5">
+                      Forwards to another redirector, which works out its target in the browser.
+                      We cannot follow that, so the page you would land on was never checked.
+                    </p>
+                  )}
                   {analysis.resolvedUrl ? (
                     <p className="font-mono text-xs text-warning-amber/80 mt-1 ml-5 break-all">
                       → {analysis.resolvedUrl}
@@ -1592,12 +1593,25 @@ function PreviewCard({ analysis, onDismiss }: { analysis: LinkAnalysis; onDismis
                   <>
                     <DomainMark domain={analysis.favicon} className="w-8 h-8 text-sm" />
                     <div className="flex-1 min-w-0">
-                      <p className="font-sans text-sm font-medium text-text-primary truncate">{analysis.title || analysis.domain}</p>
+                      <p className="font-sans text-sm font-medium text-text-primary truncate">
+                        {/* With no known destination the only honest headline
+                            is the link's own domain: the title we have belongs
+                            to the redirector's interstitial. */}
+                        {analysis.destinationUnknown ? analysis.domain : (analysis.title || analysis.domain)}
+                      </p>
                       <div className="flex items-center gap-2">
                         {threatStatus === 'checking' ? (
                           <>
                             <Loader2 className="w-3 h-3 text-primary-blue animate-spin" />
                             <span className="font-sans text-xs text-primary-blue">Checking safety...</span>
+                          </>
+                        ) : analysis.destinationUnknown ? (
+                          // Safe Browsing answered about the redirector, not
+                          // about wherever this lands. Saying "No Threats
+                          // Detected" here vouches for a page nobody checked.
+                          <>
+                            <div className="w-1.5 h-1.5 rounded-full bg-warning-amber" />
+                            <span className="font-sans text-xs text-warning-amber">Destination not verified</span>
                           </>
                         ) : threatStatus === 'safe' && analysis.fileRisk === 'none' ? (
                           <>
@@ -1642,7 +1656,7 @@ function PreviewCard({ analysis, onDismiss }: { analysis: LinkAnalysis; onDismis
                   <DomainMark domain={analysis.favicon} className="w-11 h-11 text-lg" />
                   <div className="min-w-0 flex-1">
                     <p className="font-sans text-sm font-medium text-text-primary truncate">
-                      {analysis.title || analysis.favicon}
+                      {analysis.destinationUnknown ? analysis.domain : (analysis.title || analysis.favicon)}
                     </p>
                     <p className="font-sans text-xs text-text-secondary">Check this link before opening it</p>
                   </div>
@@ -1653,6 +1667,11 @@ function PreviewCard({ analysis, onDismiss }: { analysis: LinkAnalysis; onDismis
               {/* OG Metadata */}
               {screenshotLoaded && analysis.title && (
                 <div className="mt-3 p-3 bg-bg-light rounded-lg border border-border-light">
+                  {analysis.destinationUnknown && (
+                    <p className="font-sans text-[10px] uppercase tracking-wide text-warning-amber/80 mb-1">
+                      From the redirector, not the destination
+                    </p>
+                  )}
                   <p className="font-sans text-sm font-medium text-text-primary line-clamp-2">{analysis.title}</p>
                   {analysis.description && (
                     <p className="font-sans text-xs text-text-secondary mt-1 line-clamp-2">{analysis.description}</p>
