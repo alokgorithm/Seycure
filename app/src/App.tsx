@@ -1449,7 +1449,7 @@ function PreviewCard({ analysis, onDismiss }: { analysis: LinkAnalysis; onDismis
                 withheld rather than shown over the wrong domain. A scan of
                 sl1nk.com once reported "Safe - No Threats Detected" while the
                 real destination was never checked at all. */}
-            {threatStatus === 'safe' && (
+            {threatStatus === 'safe' && !analysis.destinationUnknown && (
               <div className="flex items-center gap-2 px-3 py-2 bg-success-green/5 border border-success-green/20 rounded-lg">
                 <ShieldCheck className="w-4 h-4 text-success-green" />
                 <span className="font-sans text-xs font-medium text-success-green">No Threats Detected</span>
@@ -1886,15 +1886,27 @@ function LinkShield({ initialUrl, onInitialUrlConsumed }: {
           const finalUrl: string | undefined = data?.finalUrl;
           const hopped = Boolean(finalUrl && finalUrl !== value);
 
+          // The worker answering "Resolve failed" is not the same as a link
+          // that goes nowhere interesting: it means we never reached the
+          // destination at all. That was only treated as unknown when the
+          // domain happened to be on the shortener list, so a dead or
+          // misspelt host - tinyurl.%20com, say - came back with nothing
+          // resolved and still collected a green "No Threats Detected".
+          // Safe Browsing reports no threat for every URL it has no data on,
+          // and a host that does not exist is exactly such a URL.
+          const resolveFailed = Boolean(data?.error) || !finalUrl;
+
           // Two ways the destination stays unknown: the trail ends on another
           // redirector, which hands off in JavaScript that nothing
           // server-side can follow; or we had reason to expect a redirect and
           // got nowhere. A hop to an ordinary page is a known destination -
           // it is shown to the user, so the card is not claiming anything it
           // cannot back up.
-          const destinationUnknown = hopped
-            ? looksLikeRedirector(finalUrl as string)
-            : isShort;
+          const destinationUnknown = resolveFailed
+            ? true
+            : hopped
+              ? looksLikeRedirector(finalUrl as string)
+              : isShort;
 
           setAnalysis(prev => prev ? {
             ...prev,
