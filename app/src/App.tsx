@@ -3085,9 +3085,7 @@ function SplashScreen({ onComplete }: { onComplete: () => void }) {
         <div className="flex flex-col items-center gap-4">
           <img src="/logo.png" alt="Seycure Logo" className="w-24 h-24 object-contain shadow-2xl rounded-2xl" />
           <div className="text-center animate-text-reveal">
-            {/* primary-dark is #0A1628 and fixed in both themes, which put it at
-                  1.05:1 against the dark splash background - invisible. */}
-            <h1 className="font-sans text-4xl font-bold tracking-tight text-primary-dark dark:text-white">Seycure</h1>
+            <h1 className="font-sans text-4xl font-bold tracking-tight text-primary-dark">Seycure</h1>
             <p className="font-sans text-sm text-text-secondary mt-1 tracking-widest uppercase">by ArkQube</p>
           </div>
         </div>

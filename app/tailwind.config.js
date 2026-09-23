@@ -46,22 +46,28 @@ module.exports = {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
-        // Brand colours are fixed in both themes.
-        "primary-blue": "#0066FF",
-        "primary-dark": "#0A1628",
-        "accent-blue": "#00A3FF",
-        "danger-red": "#DC2626",
-        "warning-amber": "#F59E0B",
-        "success-green": "#10B981",
-        // Surface and text colours flip with the theme. The values live in
-        // index.css so `.dark` can redefine them in one place.
-        "primary-light": "rgb(var(--primary-light) / <alpha-value>)",
-        "text-primary": "rgb(var(--text-primary) / <alpha-value>)",
-        "text-secondary": "rgb(var(--text-secondary) / <alpha-value>)",
-        "text-muted": "rgb(var(--text-muted) / <alpha-value>)",
-        "bg-light": "rgb(var(--bg-light) / <alpha-value>)",
-        "border-light": "rgb(var(--border-light) / <alpha-value>)",
-        "bg-card": "rgb(var(--bg-card) / <alpha-value>)",
+        // Every colour reads a token, and every token is defined in both
+        // themes in index.css. These six were hex literals pinned here with
+        // the note "fixed in both themes" - which is why the brand blue and
+        // the status colours stayed at their light-theme values on a dark
+        // screen, and why one usage needed an explicit dark:text-white.
+        "primary-blue": "hsl(var(--primary-blue) / <alpha-value>)",
+        "primary-dark": "hsl(var(--primary-dark) / <alpha-value>)",
+        "accent-blue": "hsl(var(--accent-blue) / <alpha-value>)",
+        "danger-red": "hsl(var(--danger-red) / <alpha-value>)",
+        "warning-amber": "hsl(var(--warning-amber) / <alpha-value>)",
+        "success-green": "hsl(var(--success-green) / <alpha-value>)",
+        "success": {
+          DEFAULT: "hsl(var(--success) / <alpha-value>)",
+          foreground: "hsl(var(--success-foreground) / <alpha-value>)",
+        },
+        "primary-light": "hsl(var(--primary-light) / <alpha-value>)",
+        "text-primary": "hsl(var(--text-primary) / <alpha-value>)",
+        "text-secondary": "hsl(var(--text-secondary) / <alpha-value>)",
+        "text-muted": "hsl(var(--text-muted) / <alpha-value>)",
+        "bg-light": "hsl(var(--bg-light) / <alpha-value>)",
+        "border-light": "hsl(var(--border-light) / <alpha-value>)",
+        "bg-card": "hsl(var(--bg-card) / <alpha-value>)",
       },
       borderRadius: {
         xl: "calc(var(--radius) + 4px)",
@@ -72,10 +78,10 @@ module.exports = {
       },
       boxShadow: {
         xs: "0 1px 2px 0 rgb(0 0 0 / 0.05)",
-        glow: "0 0 20px rgba(0, 102, 255, 0.25)",
-        "glow-strong": "0 0 30px rgba(0, 102, 255, 0.4)",
-        "glow-amber": "0 0 20px rgba(245, 158, 11, 0.3)",
-        "glow-red": "0 0 20px rgba(220, 38, 38, 0.3)",
+        glow: "0 0 20px hsl(var(--primary-blue) / 0.25)",
+        "glow-strong": "0 0 30px hsl(var(--primary-blue) / 0.4)",
+        "glow-amber": "0 0 20px hsl(var(--warning-amber) / 0.3)",
+        "glow-red": "0 0 20px hsl(var(--danger-red) / 0.3)",
         card: "0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1)",
         "card-hover": "0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)",
       },
@@ -111,8 +117,8 @@ module.exports = {
           to: { opacity: "1", transform: "scale(1)" },
         },
         "pulse-glow": {
-          "0%, 100%": { opacity: "1", boxShadow: "0 0 8px rgba(0, 102, 255, 0.4)" },
-          "50%": { opacity: "0.8", boxShadow: "0 0 16px rgba(0, 102, 255, 0.6)" },
+          "0%, 100%": { opacity: "1", boxShadow: "0 0 8px hsl(var(--primary-blue) / 0.4)" },
+          "50%": { opacity: "0.8", boxShadow: "0 0 16px hsl(var(--primary-blue) / 0.6)" },
         },
         "scanline": {
           "0%": { transform: "translateY(0)" },

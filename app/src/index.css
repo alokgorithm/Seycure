@@ -5,81 +5,121 @@
 @tailwind utilities;
 
 @layer base {
+  /* ── Theme tokens ──────────────────────────────────────────────────────
+     Every colour lives here, in one format: HSL channels without the
+     wrapper, so Tailwind can apply an opacity modifier (bg-primary-blue/40).
+     Both themes define the same set - a token with no dark value is a bug,
+     because the class that reads it is used on both.
+     ------------------------------------------------------------------- */
   :root {
+    /* Surfaces */
     --background: 0 0% 100%;
     --foreground: 220 20% 10%;
     --card: 0 0% 100%;
     --card-foreground: 220 20% 10%;
     --popover: 0 0% 100%;
     --popover-foreground: 220 20% 10%;
-    --primary: 210 100% 45%;
-    --primary-foreground: 0 0% 100%;
     --secondary: 210 20% 96%;
     --secondary-foreground: 220 20% 10%;
     --muted: 210 15% 95%;
     --muted-foreground: 220 10% 45%;
-    --accent: 210 100% 45%;
-    --accent-foreground: 0 0% 100%;
-    --destructive: 0 70% 50%;
-    --destructive-foreground: 0 0% 100%;
-    --warning: 38 90% 50%;
-    --warning-foreground: 0 0% 100%;
-    --info: 210 80% 50%;
-    --info-foreground: 0 0% 100%;
     --border: 210 15% 88%;
     --input: 210 15% 92%;
-    --ring: 210 100% 45%;
+
+    /* Brand. One blue, not two: --primary and --primary-blue were
+       separate tokens holding near-identical colours (210deg vs 216deg) in
+       different formats, and only one of them changed in dark mode. */
+    --primary: 216 100% 50%;
+    --primary-foreground: 0 0% 100%;
+    --primary-blue: 216 100% 50%;
+    --primary-dark: 216 60% 10%;
+    --accent-blue: 202 100% 50%;
+    --ring: 216 100% 50%;
+
+    /* --accent used to be an exact copy of --primary, which made it
+       useless as an accent. It is the cyan now. */
+    --accent: 202 100% 50%;
+    --accent-foreground: 0 0% 100%;
+
+    /* Status */
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --danger-red: 0 72% 51%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+    --warning-amber: 38 92% 50%;
+    --success: 160 84% 39%;
+    --success-foreground: 0 0% 100%;
+    --success-green: 160 84% 39%;
+    --info: 202 100% 50%;
+    --info-foreground: 0 0% 100%;
+
+    /* Named surfaces and text */
+    --primary-light: 216 100% 96%;
+    --text-primary: 240 28% 14%;
+    --text-secondary: 215 16% 47%;
+    --text-muted: 213 20% 65%;
+    --bg-light: 210 40% 98%;
+    --bg-card: 0 0% 100%;
+    --border-light: 214 32% 91%;
+
     --radius: 8px;
-    
-    --primary-blue: #0066FF;
-    --primary-dark: #0A1628;
-    --accent-blue: #00A3FF;
-    --danger-red: #DC2626;
-    --warning-amber: #F59E0B;
-    --success-green: #10B981;
-    --bg-white: #FFFFFF;
-
-    /* Theme-aware surfaces and text, as "R G B" so Tailwind can apply
-       opacity modifiers such as bg-primary-light/50. */
-    --primary-light: 232 241 255;
-    --text-primary: 26 26 46;
-    --text-secondary: 100 116 139;
-    --text-muted: 148 163 184;
-    --bg-light: 248 250 252;
-    --bg-card: 255 255 255;
-    --border-light: 226 232 240;
-
     color-scheme: light;
   }
 
   /* Dark theme. The `dark` class is applied to <html> from main.tsx, which
-     follows the OS setting. */
+     follows the OS setting. Brand and status colours are lifted rather than
+     reused: #0066FF and #DC2626 are mixed for white backgrounds and go muddy
+     on a near-black one. */
   .dark {
+    /* Surfaces */
     --background: 220 24% 6%;
     --foreground: 210 30% 94%;
     --card: 220 20% 11%;
     --card-foreground: 210 30% 94%;
     --popover: 220 20% 11%;
     --popover-foreground: 210 30% 94%;
-    --primary: 210 100% 55%;
-    --primary-foreground: 0 0% 100%;
     --secondary: 220 18% 16%;
     --secondary-foreground: 210 30% 94%;
     --muted: 220 18% 16%;
     --muted-foreground: 215 15% 65%;
-    --accent: 210 100% 55%;
-    --accent-foreground: 0 0% 100%;
     --border: 220 16% 20%;
     --input: 220 16% 20%;
-    --ring: 210 100% 55%;
 
-    --primary-light: 18 35 58;
-    --text-primary: 232 237 245;
-    --text-secondary: 148 163 184;
-    --text-muted: 100 116 139;
-    --bg-light: 12 16 23;
-    --bg-card: 22 26 35;
-    --border-light: 35 42 56;
+    /* Brand */
+    --primary: 216 100% 60%;
+    --primary-foreground: 0 0% 100%;
+    --primary-blue: 216 100% 60%;
+    /* The navy is a text colour on light, so on dark it has to invert -
+       App.tsx was patching this one usage with an explicit dark:text-white. */
+    --primary-dark: 210 30% 94%;
+    --accent-blue: 199 93% 60%;
+    --ring: 216 100% 60%;
+
+    --accent: 199 93% 60%;
+    --accent-foreground: 220 24% 6%;
+
+    /* Status */
+    --destructive: 0 91% 71%;
+    --destructive-foreground: 220 24% 6%;
+    --danger-red: 0 91% 71%;
+    --warning: 43 96% 56%;
+    --warning-foreground: 220 24% 6%;
+    --warning-amber: 43 96% 56%;
+    --success: 158 64% 52%;
+    --success-foreground: 220 24% 6%;
+    --success-green: 158 64% 52%;
+    --info: 199 93% 60%;
+    --info-foreground: 220 24% 6%;
+
+    /* Named surfaces and text */
+    --primary-light: 215 53% 15%;
+    --text-primary: 217 39% 94%;
+    --text-secondary: 213 20% 65%;
+    --text-muted: 215 16% 47%;
+    --bg-light: 218 31% 7%;
+    --bg-card: 222 23% 11%;
+    --border-light: 220 23% 18%;
 
     color-scheme: dark;
   }
@@ -110,24 +150,19 @@
     font-family: 'IBM Plex Mono', monospace;
   }
   
-  .text-primary-blue {
-    color: var(--primary-blue);
-  }
-  
-  .bg-primary-blue {
-    background-color: var(--primary-blue);
-  }
-  
-  .border-primary-blue {
-    border-color: var(--primary-blue);
-  }
-  
+  /* .text-primary-blue / .bg-primary-blue / .border-primary-blue used to be
+     hand-written here over the top of the identically named utilities
+     Tailwind generates from the config. Being in a later layer they won, and
+     they read a var that had no dark value - which is what pinned the brand
+     blue to its light-theme colour on a dark screen. Tailwind generates them
+     from --primary-blue now, so both themes apply. */
+
   .glow-blue {
-    box-shadow: 0 0 20px rgba(0, 102, 255, 0.25);
+    box-shadow: 0 0 20px hsl(var(--primary-blue) / 0.25);
   }
   
   .glow-blue-strong {
-    box-shadow: 0 0 30px rgba(0, 102, 255, 0.4);
+    box-shadow: 0 0 30px hsl(var(--primary-blue) / 0.4);
   }
 }
 
@@ -157,11 +192,11 @@
 @keyframes pulse-glow {
   0%, 100% {
     opacity: 1;
-    box-shadow: 0 0 8px rgba(0, 102, 255, 0.4);
+    box-shadow: 0 0 8px hsl(var(--primary-blue) / 0.4);
   }
   50% {
     opacity: 0.8;
-    box-shadow: 0 0 16px rgba(0, 102, 255, 0.6);
+    box-shadow: 0 0 16px hsl(var(--primary-blue) / 0.6);
   }
 }
 
