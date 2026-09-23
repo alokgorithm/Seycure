@@ -44,8 +44,15 @@ const POSITIVES: PositiveCase[] = [
     { text: 'Mobile: 98765 43210', expect: 'Phone (with label)' },
 
     // ── Indian identity documents ──────────────────────────────────────
-    { text: '2345 6789 0123', expect: 'Aadhaar Number' },
-    { text: '234567890123', expect: 'Aadhaar Number', note: 'unspaced' },
+    // UIDAI's published sample numbers. They have to pass the Verhoeff check
+    // to be named an Aadhaar at all, so an invented 2345-6789-0123 cannot
+    // stand in here - it is not a number UIDAI could ever have issued.
+    { text: '9999 4105 7058', expect: 'Aadhaar Number' },
+    { text: '999999990019', expect: 'Aadhaar Number', note: 'unspaced' },
+    // The other half of that rule: twelve digits that fail the checksum are
+    // still hidden, just under the generic name rather than a confident wrong
+    // one. Losing this case would mean the app had started guessing again.
+    { text: '234567890123', expect: 'Sensitive Number', note: 'fails Verhoeff' },
     { text: 'ABCDE1234F', expect: 'PAN Card Number' },
     { text: 'HDFC0001234', expect: 'IFSC Code' },
     { text: 'alok@okhdfcbank', expect: 'UPI / Payment ID' },

@@ -212,7 +212,15 @@ export function resolveNumericType(
         return { type: 'Transaction ID', confident: true };
     }
 
-    if (digits.length === 12) {
+    // A leading "+" is a country code, and no Aadhaar is ever written with one.
+    // The twelve-digit rule below exists to stop a bare digit run being named
+    // on shape alone - but +91 followed by a ten-digit mobile is twelve digits
+    // too, and it was losing its "Phone Number" label to that rule. A match
+    // that arrived with a country code has better evidence than its shape, so
+    // it keeps the name the pattern that found it gave it.
+    const hasCountryCode = /^\s*\+/.test(value);
+
+    if (digits.length === 12 && !hasCountryCode) {
         if (isValidAadhaar(digits)) {
             return { type: 'Aadhaar Number', confident: true };
         }
@@ -307,7 +315,10 @@ export const OCR_PATTERNS: OCRPattern[] = [
         type: 'Aadhaar Number',
         severity: 'critical',
         action: 'blur',
-        regex: /\b\d{4}\s?\d{4}\s?\d{4}\b/g,
+        // Not after a "+": the digits of +919876543210 satisfy this shape, and
+        // claiming them produced a second detection over a number the phone
+        // rule had already found. An Aadhaar never carries a country code.
+        regex: /(?<!\+)\b\d{4}\s?\d{4}\s?\d{4}\b/g,
         redact: (m) => `XXXX XXXX ${digitsOf(m).slice(-4)}`,
     },
     {
