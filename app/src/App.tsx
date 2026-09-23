@@ -28,6 +28,7 @@ import { Input } from '@/components/ui/input';
 import { saveImage } from '@/lib/saveImage';
 import { useNativeShare } from '@/hooks/useNativeShare';
 import { useAppStats } from '@/hooks/useAppStats';
+import { getThemeChoice, setThemeChoice, type ThemeChoice } from '@/lib/theme';
 
 import { analyzeScreenshot, type ScreenshotFinding } from '@/hooks/useMLKitOCR';
 import { BlurEditorModal } from '@/components/BlurEditorModal';
@@ -255,7 +256,7 @@ function fileToBase64(file: File): Promise<string> {
 // Components
 function TopBar({ onOpenMenu }: { onOpenMenu: () => void }) {
   return (
-    <div className="safe-top-bar flex items-center justify-between px-5 pb-3.5 bg-white dark:bg-[#0c1017] border-b border-border-light dark:border-white/10 shadow-xs sticky top-0 z-30">
+    <div className="safe-top-bar flex items-center justify-between px-5 pb-3.5 bg-white dark:bg-bg-light border-b border-border-light dark:border-white/10 shadow-xs sticky top-0 z-30">
       <div className="flex items-center gap-2.5">
         <img src="/logo.png" alt="Seycure" className="w-8 h-8 object-contain rounded-xl shadow-xs" />
         <div className="flex items-center gap-2">
@@ -3102,7 +3103,7 @@ function ProtectedItemsCounter({ onOpenStats }: { onOpenStats: () => void }) {
   const hasSecondaryStats = (stats.photosScrubbed || 0) > 0 || (stats.linksCleaned || 0) > 0 || (stats.trackersRemoved || 0) > 0;
 
   return (
-    <div className="relative overflow-hidden bg-white dark:bg-[#161a23] border border-border-light dark:border-white/10 rounded-2xl p-5 shadow-card animate-fadeUp">
+    <div className="relative overflow-hidden bg-white dark:bg-bg-card border border-border-light dark:border-white/10 rounded-2xl p-5 shadow-card animate-fadeUp">
       {/* Top row: Shield Icon + Counter Title + (Conditional Trophy when items protected) */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3.5">
@@ -3173,8 +3174,21 @@ function ProtectedItemsCounter({ onOpenStats }: { onOpenStats: () => void }) {
 
 function SettingsScreen({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
+  const [theme, setTheme] = useState<ThemeChoice>('system');
   const { stats } = useAppStats();
   const { shareText } = useNativeShare();
+
+  // Read the stored choice when the sheet opens, so the control shows what is
+  // actually in force rather than the default.
+  useEffect(() => {
+    if (!open) return;
+    void getThemeChoice().then(setTheme);
+  }, [open]);
+
+  const chooseTheme = async (choice: ThemeChoice) => {
+    setTheme(choice);
+    await setThemeChoice(choice);
+  };
 
   const toggleSection = (section: string) => {
     setExpandedSection(prev => prev === section ? null : section);
@@ -3189,7 +3203,7 @@ function SettingsScreen({ open, onClose }: { open: boolean; onClose: () => void 
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto bg-white dark:bg-[#121620] text-text-primary dark:text-white border border-border-light dark:border-white/10 rounded-3xl p-6 shadow-2xl">
+      <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto bg-white dark:bg-bg-card text-text-primary dark:text-white border border-border-light dark:border-white/10 rounded-3xl p-6 shadow-2xl">
         <div className="flex items-center justify-between pb-3 border-b border-border-light dark:border-white/10">
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-xl bg-black/5 dark:bg-white/10 text-text-secondary dark:text-text-muted flex items-center justify-center">
@@ -3203,6 +3217,44 @@ function SettingsScreen({ open, onClose }: { open: boolean; onClose: () => void 
         </div>
 
         <div className="py-3 space-y-1.5">
+          {/* Appearance. A plain segmented control rather than a collapsible
+              section: it is one choice, and hiding it behind a chevron is how
+              it came to be invisible in the first place. */}
+          <div className="rounded-2xl border border-border-light dark:border-white/10 p-3">
+            <div className="flex items-center gap-3.5">
+              <div className="w-9 h-9 rounded-xl bg-black/5 dark:bg-white/10 text-text-secondary dark:text-text-muted flex items-center justify-center shrink-0">
+                <Sparkles className="w-5 h-5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-sans text-sm font-semibold">Appearance</p>
+                <p className="text-xs text-text-muted">
+                  {theme === 'system' ? 'Following your phone' : `Always ${theme}`}
+                </p>
+              </div>
+            </div>
+            <div
+              role="radiogroup"
+              aria-label="Appearance"
+              className="mt-3 grid grid-cols-3 gap-1 p-1 rounded-xl bg-black/5 dark:bg-white/5"
+            >
+              {(['light', 'dark', 'system'] as ThemeChoice[]).map(choice => (
+                <button
+                  key={choice}
+                  role="radio"
+                  aria-checked={theme === choice}
+                  onClick={() => void chooseTheme(choice)}
+                  className={`py-2 rounded-lg font-sans text-xs font-semibold capitalize transition-colors ${
+                    theme === choice
+                      ? 'bg-bg-card dark:bg-white/15 text-text-primary dark:text-white shadow-xs'
+                      : 'text-text-secondary dark:text-text-muted hover:text-text-primary dark:hover:text-white'
+                  }`}
+                >
+                  {choice}
+                </button>
+              ))}
+            </div>
+          </div>
+
           {/* Section 1: Privacy */}
           <div className="rounded-2xl border border-border-light dark:border-white/10 overflow-hidden">
             <button
@@ -3370,7 +3422,7 @@ function App() {
   const clearScannedUrl = useCallback(() => setInitialScannedUrl(''), []);
 
   return (
-    <div className="min-h-screen safe-bottom bg-bg-light dark:bg-[#0c1017] text-text-primary dark:text-white">
+    <div className="min-h-screen safe-bottom bg-bg-light dark:bg-bg-light text-text-primary dark:text-white">
       {showSplash && <SplashScreen onComplete={() => setShowSplash(false)} />}
 
 
@@ -3418,7 +3470,7 @@ function App() {
               className={`flex flex-col items-center justify-center p-4 rounded-xl border transition-all active:scale-[0.98] shadow-card ${
                 activeTool === 'metadata'
                   ? 'bg-primary-blue text-white border-primary-blue shadow-glow'
-                  : 'bg-white dark:bg-[#161a23] border-border-light dark:border-white/10 hover:border-primary-blue/40 text-text-primary dark:text-white'
+                  : 'bg-white dark:bg-bg-card border-border-light dark:border-white/10 hover:border-primary-blue/40 text-text-primary dark:text-white'
               }`}
             >
               <div className={`w-10 h-10 rounded-xl flex items-center justify-center mb-1.5 transition-transform group-hover:scale-110 ${
@@ -3435,7 +3487,7 @@ function App() {
               className={`flex flex-col items-center justify-center p-4 rounded-xl border transition-all active:scale-[0.98] shadow-card ${
                 activeTool === 'link'
                   ? 'bg-primary-blue text-white border-primary-blue shadow-glow'
-                  : 'bg-white dark:bg-[#161a23] border-border-light dark:border-white/10 hover:border-primary-blue/40 text-text-primary dark:text-white'
+                  : 'bg-white dark:bg-bg-card border-border-light dark:border-white/10 hover:border-primary-blue/40 text-text-primary dark:text-white'
               }`}
             >
               <div className={`w-10 h-10 rounded-xl flex items-center justify-center mb-1.5 transition-transform group-hover:scale-110 ${
@@ -3449,7 +3501,7 @@ function App() {
             {/* QR Tool */}
             <button
               onClick={() => setShowScannerModal(true)}
-              className="flex flex-col items-center justify-center p-4 rounded-xl bg-white dark:bg-[#161a23] border border-border-light dark:border-white/10 hover:border-primary-blue/40 text-text-primary dark:text-white shadow-card transition-all active:scale-[0.98]"
+              className="flex flex-col items-center justify-center p-4 rounded-xl bg-white dark:bg-bg-card border border-border-light dark:border-white/10 hover:border-primary-blue/40 text-text-primary dark:text-white shadow-card transition-all active:scale-[0.98]"
             >
               <div className="w-10 h-10 rounded-xl bg-primary-blue/10 text-primary-blue dark:text-accent-blue flex items-center justify-center mb-1.5 transition-transform group-hover:scale-110">
                 <QrCode className="w-5 h-5" />
@@ -3461,7 +3513,7 @@ function App() {
           {/* Active Tool Section (smoothly rendered right here on this single page!) */}
           <div className="pt-2 animate-fadeUp">
             {activeTool === 'link' && (
-              <div className="relative bg-white dark:bg-[#161a23] rounded-2xl border border-border-light dark:border-white/10 p-2 shadow-card">
+              <div className="relative bg-white dark:bg-bg-card rounded-2xl border border-border-light dark:border-white/10 p-2 shadow-card">
                 <div className="flex items-center justify-between px-3 pt-2 pb-1">
                   <span className="text-xs font-bold text-text-secondary dark:text-text-muted uppercase tracking-wider">Link Shield & Cleaner</span>
                   <button onClick={() => setActiveTool('none')} className="text-xs text-text-muted hover:text-text-primary flex items-center gap-1">
@@ -3473,7 +3525,7 @@ function App() {
             )}
 
             {activeTool === 'metadata' && (
-              <div className="relative bg-white dark:bg-[#161a23] rounded-2xl border border-border-light dark:border-white/10 p-2 shadow-card">
+              <div className="relative bg-white dark:bg-bg-card rounded-2xl border border-border-light dark:border-white/10 p-2 shadow-card">
                 <div className="flex items-center justify-between px-3 pt-2 pb-1">
                   <span className="text-xs font-bold text-text-secondary dark:text-text-muted uppercase tracking-wider">Metadata Scrubber</span>
                   <button onClick={() => setActiveTool('none')} className="text-xs text-text-muted hover:text-text-primary flex items-center gap-1">
@@ -3485,7 +3537,7 @@ function App() {
             )}
 
             {activeTool === 'blur' && (
-              <div className="relative bg-white dark:bg-[#161a23] rounded-2xl border border-border-light dark:border-white/10 p-2 shadow-card">
+              <div className="relative bg-white dark:bg-bg-card rounded-2xl border border-border-light dark:border-white/10 p-2 shadow-card">
                 <div className="flex items-center justify-between px-3 pt-2 pb-1">
                   <span className="text-xs font-bold text-text-secondary dark:text-text-muted uppercase tracking-wider">Privacy Blur</span>
                   <button onClick={() => setActiveTool('none')} className="text-xs text-text-muted hover:text-text-primary flex items-center gap-1">

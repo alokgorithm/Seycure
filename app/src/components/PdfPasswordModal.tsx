@@ -50,7 +50,7 @@ export function PdfPasswordModal({
 
     return (
         <div className="fixed inset-0 z-[9998] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-            <div className="w-full max-w-sm rounded-2xl bg-white dark:bg-[#141a24] border border-border-light dark:border-white/10 shadow-xl overflow-hidden">
+            <div className="w-full max-w-sm rounded-2xl bg-white dark:bg-bg-card border border-border-light dark:border-white/10 shadow-xl overflow-hidden">
                 <div className="flex items-start gap-3 p-4 border-b border-border-light dark:border-white/10">
                     <div className="w-9 h-9 rounded-xl bg-primary-light dark:bg-primary-blue/15 flex items-center justify-center shrink-0">
                         <Lock className="w-4 h-4 text-primary-blue" />
