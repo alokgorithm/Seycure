@@ -2094,12 +2094,25 @@ function MediaScrubber() {
           } as Parameters<typeof exifr.parse>[1]);
 
           if (exifData) {
-            if (exifData.latitude !== undefined && exifData.longitude !== undefined) {
-              const latDir = exifData.latitude >= 0 ? 'N' : 'S';
-              const lonDir = exifData.longitude >= 0 ? 'E' : 'W';
+            // NaN survives an `!== undefined` check, and Math.abs(NaN).toFixed(4)
+            // is the string "NaN" while NaN >= 0 is false, so a GPS block exifr
+            // could not decode printed as "NaN°S NaN°W" - which is what a real
+            // device showed. Coordinates are only rendered when they are really
+            // numbers. The chip still appears either way: the location was in
+            // the file and was removed, and saying nothing would under-report
+            // the one thing the user most wants confirmed.
+            const lat = exifData.latitude;
+            const lon = exifData.longitude;
+            const hasGps = lat !== undefined || lon !== undefined
+              || exifData.GPSLatitude !== undefined;
+
+            if (hasGps) {
+              const usable = Number.isFinite(lat) && Number.isFinite(lon);
               metadata.push({
                 type: 'gps',
-                value: `${Math.abs(exifData.latitude).toFixed(4)}°${latDir} ${Math.abs(exifData.longitude).toFixed(4)}°${lonDir}`,
+                value: usable
+                  ? `${Math.abs(lat).toFixed(4)}°${lat >= 0 ? 'N' : 'S'} ${Math.abs(lon).toFixed(4)}°${lon >= 0 ? 'E' : 'W'}`
+                  : 'location removed',
               });
             }
             if (exifData.Make || exifData.Model) {
@@ -2486,6 +2499,17 @@ function MediaScrubber() {
     // password has no value to show - and must not have one - so it reads as
     // a statement rather than "Password stripped · Password removed".
     if (m.type === 'password') return m.value;
+
+    // Several PDF and DOCX fields share a chip type, because the type picks
+    // the icon and there are fewer icons than fields. The field a value came
+    // from is carried in the value itself as "Field: value" - so the chip was
+    // printing two different field names, "Title stripped · Subject: ...",
+    // and only the second one was right. Where the value names its own field,
+    // that name wins. The list is explicit so a title that merely contains a
+    // colon ("Report: Q3") is left alone.
+    const named = /^(Subject|Creator|Producer|Keywords|Category|Manager|Company|Last modified):\s*([\s\S]+)$/.exec(m.value);
+    if (named) return `${named[1]} stripped · ${named[2]}`;
+
     const prefix = m.type.charAt(0).toUpperCase() + m.type.slice(1);
     return `${prefix} stripped · ${m.value}`;
   };
