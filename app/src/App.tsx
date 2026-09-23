@@ -32,6 +32,8 @@ import { getThemeChoice, setThemeChoice, type ThemeChoice } from '@/lib/theme';
 import { useQuota } from '@/hooks/useQuota';
 import { PaywallModal, type PaywallReason } from '@/components/PaywallModal';
 import { canSimulatePro, isProUnlocked, setProUnlocked } from '@/lib/entitlements';
+import { useEntitlement } from '@/hooks/useEntitlement';
+import { queryPurchases, describe, isBillingSupported } from '@/lib/billing';
 
 import { analyzeScreenshot, type ScreenshotFinding } from '@/hooks/useMLKitOCR';
 import { BlurEditorModal } from '@/components/BlurEditorModal';
@@ -2854,6 +2856,13 @@ function ScreenshotPrivacyGuard() {
         featureName={paywall?.feature}
         limit={quota.limit}
         onClose={() => setPaywall(null)}
+        onPurchased={() => {
+          // Re-read rather than assuming: quota.refresh() asks Play through
+          // isProUnlocked(), so the counter disappears and the gate opens
+          // from the same source of truth everything else uses.
+          void quota.refresh();
+          setPaywall(null);
+        }}
       />
 
       {/* What is left of today's free auto-detects. Shown only once one has
@@ -3215,6 +3224,9 @@ function SettingsScreen({ open, onClose }: { open: boolean; onClose: () => void 
   const [theme, setTheme] = useState<ThemeChoice>('system');
   const [showProSwitch, setShowProSwitch] = useState(false);
   const [proOn, setProOn] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+  const [restoreMessage, setRestoreMessage] = useState<string | null>(null);
+  const entitlement = useEntitlement();
   const { stats } = useAppStats();
   const { shareText } = useNativeShare();
 
@@ -3295,6 +3307,57 @@ function SettingsScreen({ open, onClose }: { open: boolean; onClose: () => void 
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* Pro status and Restore Purchases.
+              Play ties the purchase to the user's Google account plus our
+              package name, so "restore" is just asking Play again - there is
+              no login and nothing to sign into. The button is not optional:
+              its absence is a common Play rejection reason, and a user who
+              reinstalls has no other way back to what they paid for. */}
+          <div className="rounded-2xl border border-border-light dark:border-white/10 p-3">
+            <div className="flex items-center gap-3.5">
+              <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${entitlement.isPro ? 'bg-success-green/15 text-success-green' : 'bg-black/5 dark:bg-white/10 text-text-secondary dark:text-text-muted'}`}>
+                <Sparkles className="w-5 h-5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-sans text-sm font-semibold">
+                  {entitlement.isPro ? 'Seycure Pro' : 'Free'}
+                </p>
+                <p className="text-xs text-text-muted">
+                  {entitlement.isPro
+                    ? 'Unlimited auto-detection'
+                    : '3 auto-detects a day — manual blur unlimited'}
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={async () => {
+                setRestoring(true);
+                setRestoreMessage(null);
+                const result = await queryPurchases();
+                await entitlement.refresh();
+                setRestoring(false);
+                setRestoreMessage(
+                  result.ok
+                    ? (result.owned
+                        ? 'Pro restored on this device.'
+                        : 'No previous purchase found on this Google account.')
+                    : describe(result),
+                );
+              }}
+              disabled={restoring || !isBillingSupported()}
+              className="mt-3 w-full py-2.5 rounded-xl border border-border-light dark:border-white/15 font-sans text-xs font-semibold text-text-primary dark:text-white hover:bg-black/5 dark:hover:bg-white/10 transition-colors disabled:opacity-50"
+            >
+              {restoring ? 'Checking with Google Play…' : 'Restore purchases'}
+            </button>
+
+            {restoreMessage && (
+              <p className="mt-2 font-sans text-xs text-text-secondary dark:text-text-muted">
+                {restoreMessage}
+              </p>
+            )}
           </div>
 
           {/* Debug builds only, and the release build has no way to reach it:

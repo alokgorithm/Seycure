@@ -6,12 +6,20 @@
  * before the user has had something work. Someone who has not yet seen the
  * app find anything has no reason to pay for more of it.
  *
- * There is no purchase button yet: Play Billing is slice 2. Until it lands
- * this explains the limit and gets out of the way, rather than showing a
- * button that cannot charge anyone.
+ * The price comes from Play rather than being written in, so it is the user's
+ * currency and whatever Play Console actually says. When Play cannot be
+ * reached the button still works - the purchase flow reports its own failure,
+ * with a message per state - but it does not claim a price it could not read.
  */
+import { useEffect, useState } from 'react';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
-import { X, Sparkles, Check } from 'lucide-react';
+import { X, Sparkles, Check, Loader2 } from 'lucide-react';
+import {
+    getProductDetails,
+    purchase as startPurchase,
+    describe,
+    isBillingSupported,
+} from '@/lib/billing';
 
 export type PaywallReason = 'quota' | 'pro-feature';
 
@@ -22,6 +30,8 @@ interface PaywallModalProps {
     /** What the user reached for, when it was a Pro feature. */
     featureName?: string;
     onClose: () => void;
+    /** Called after a purchase succeeds, so the app can re-check with Play. */
+    onPurchased?: () => void;
 }
 
 const PRO_FEATURES = [
@@ -38,7 +48,30 @@ export function PaywallModal({
     limit,
     featureName,
     onClose,
+    onPurchased,
 }: PaywallModalProps) {
+    const [price, setPrice] = useState<string | null>(null);
+    const [busy, setBusy] = useState(false);
+    const [message, setMessage] = useState<string | null>(null);
+
+    // Ask for the price when the sheet opens rather than on mount: no point
+    // talking to Play for a dialog the user may never see.
+    useEffect(() => {
+        if (!open || !isBillingSupported()) return;
+        setMessage(null);
+        void getProductDetails().then(result => {
+            if (result.ok && result.price) setPrice(result.price);
+        });
+    }, [open]);
+
+    const buy = async () => {
+        setBusy(true);
+        setMessage(null);
+        const result = await startPurchase();
+        setBusy(false);
+        setMessage(describe(result));
+        if (result.ok && result.owned) onPurchased?.();
+    };
     const title = reason === 'quota'
         ? "That's today's free auto-detects"
         : `${featureName ?? 'That feature'} is part of Pro`;
@@ -83,11 +116,28 @@ export function PaywallModal({
                     Pro is a one-time unlock. No subscription.
                 </p>
 
+                {message && (
+                    <p className="mt-3 font-sans text-xs text-text-secondary">{message}</p>
+                )}
+
+                <button
+                    onClick={() => void buy()}
+                    disabled={busy || !isBillingSupported()}
+                    className="mt-4 w-full py-3 rounded-xl bg-primary-blue text-white font-sans text-sm font-semibold hover:opacity-90 transition-opacity disabled:opacity-60 flex items-center justify-center gap-2"
+                >
+                    {busy && <Loader2 className="w-4 h-4 animate-spin" />}
+                    {busy
+                        ? 'Talking to Google Play…'
+                        : price
+                            ? `Unlock Pro — ${price}`
+                            : 'Unlock Pro'}
+                </button>
+
                 <button
                     onClick={onClose}
-                    className="mt-5 w-full py-3 rounded-xl bg-primary-blue text-white font-sans text-sm font-semibold hover:opacity-90 transition-opacity"
+                    className="mt-2 w-full py-2.5 rounded-xl font-sans text-sm font-medium text-text-secondary hover:text-text-primary transition-colors"
                 >
-                    Got it
+                    Not now
                 </button>
             </DialogContent>
         </Dialog>

@@ -10,6 +10,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(MLKitTextPlugin.class);
         registerPlugin(AppSettingsPlugin.class);
         registerPlugin(PdfUnlockPlugin.class);
+        registerPlugin(BillingPlugin.class);
 
         // PDFBox loads its fonts and CMaps from assets and needs the context
         // before any document is opened. Cheap, and it only touches local

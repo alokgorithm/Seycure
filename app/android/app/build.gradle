@@ -83,6 +83,13 @@ dependencies {
     // which is most of the APK size it adds.
     implementation 'com.tom-roush:pdfbox-android:2.0.27.0'
 
+    // Play Billing, used directly. Per CLAUDE.md §6.6 no third-party billing
+    // SDK: one would receive device identifiers and purchase data, which
+    // would have to be declared in Data Safety and contradicts the app's
+    // on-device promise. Play plus the package name is the whole identity
+    // system - there is no login, no account and no server.
+    implementation 'com.android.billingclient:billing:7.1.1'
+
     // Crash reporting only. The BoM keeps the Firebase versions consistent;
     // adding any other firebase-* artifact here needs a policy decision first,
     // because it changes what the Play Data Safety form has to declare.
