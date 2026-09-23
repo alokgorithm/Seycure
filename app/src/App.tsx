@@ -29,6 +29,9 @@ import { saveImage } from '@/lib/saveImage';
 import { useNativeShare } from '@/hooks/useNativeShare';
 import { useAppStats } from '@/hooks/useAppStats';
 import { getThemeChoice, setThemeChoice, type ThemeChoice } from '@/lib/theme';
+import { useQuota } from '@/hooks/useQuota';
+import { PaywallModal, type PaywallReason } from '@/components/PaywallModal';
+import { canSimulatePro, isProUnlocked, setProUnlocked } from '@/lib/entitlements';
 
 import { analyzeScreenshot, type ScreenshotFinding } from '@/hooks/useMLKitOCR';
 import { BlurEditorModal } from '@/components/BlurEditorModal';
@@ -2643,6 +2646,8 @@ function ScreenshotPrivacyGuard() {
   const [imageBase64, setImageBase64] = useState<string | null>(null);
   const [imageName, setImageName] = useState<string>('');
   const [scanning, setScanning] = useState(false);
+  const quota = useQuota();
+  const [paywall, setPaywall] = useState<{ reason: PaywallReason; feature?: string } | null>(null);
   const [findings, setFindings] = useState<ScreenshotFinding[]>([]);
   const [appContext, setAppContext] = useState<string | null>(null);
   const [scanned, setScanned] = useState(false);
@@ -2763,6 +2768,20 @@ function ScreenshotPrivacyGuard() {
    * deliberately, through "Edit blur areas".
    */
   const runScan = useCallback(async (base64: string) => {
+    // The quota is charged here, at detection, and nowhere else. Charging on
+    // save would meter the wrong thing: saving is not the expensive or the
+    // valuable step, and saveImage.ts already notes that a share sheet which
+    // merely opened counts as a save, so a dismissed sheet would burn a
+    // detection the user never got.
+    //
+    // Manual blur is untouched by this - the editor is reachable from the
+    // summary without a scan, and dragging rectangles is never metered.
+    const allowed = await quota.consume();
+    if (!allowed) {
+      setPaywall({ reason: 'quota' });
+      return;
+    }
+
     setScanning(true);
     let failed = false;
     try {
@@ -2782,7 +2801,7 @@ function ScreenshotPrivacyGuard() {
       setScanning(false);
       setScanFailed(failed);
     }
-  }, []);
+  }, [quota]);
 
   const loadImage = useCallback((file: File) => {
     setImageName(file.name);
@@ -2829,6 +2848,25 @@ function ScreenshotPrivacyGuard() {
 
   return (
     <div className="space-y-4 p-4">
+      <PaywallModal
+        open={paywall !== null}
+        reason={paywall?.reason ?? 'quota'}
+        featureName={paywall?.feature}
+        limit={quota.limit}
+        onClose={() => setPaywall(null)}
+      />
+
+      {/* What is left of today's free auto-detects. Shown only once one has
+          been spent, so a first-time user is not greeted by a counter, and
+          never for Pro, who have no limit to count towards. */}
+      {!quota.isPro && quota.ready && quota.used > 0 && (
+        <p className="font-sans text-xs text-text-muted text-center">
+          {quota.remaining > 0
+            ? `${quota.remaining} of ${quota.limit} free auto-detects left today`
+            : `No free auto-detects left today — manual blur is still unlimited`}
+        </p>
+      )}
+
       {/* Drop zone / image preview */}
       <div
         onClick={() => fileInputRef.current?.click()}
@@ -3175,6 +3213,8 @@ function ProtectedItemsCounter({ onOpenStats }: { onOpenStats: () => void }) {
 function SettingsScreen({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
   const [theme, setTheme] = useState<ThemeChoice>('system');
+  const [showProSwitch, setShowProSwitch] = useState(false);
+  const [proOn, setProOn] = useState(false);
   const { stats } = useAppStats();
   const { shareText } = useNativeShare();
 
@@ -3183,6 +3223,8 @@ function SettingsScreen({ open, onClose }: { open: boolean; onClose: () => void 
   useEffect(() => {
     if (!open) return;
     void getThemeChoice().then(setTheme);
+    void canSimulatePro().then(setShowProSwitch);
+    void isProUnlocked().then(setProOn);
   }, [open]);
 
   const chooseTheme = async (choice: ThemeChoice) => {
@@ -3254,6 +3296,37 @@ function SettingsScreen({ open, onClose }: { open: boolean; onClose: () => void 
               ))}
             </div>
           </div>
+
+          {/* Debug builds only, and the release build has no way to reach it:
+              canSimulatePro() is the native BuildConfig.DEBUG flag, and it
+              gates the only writer of the entitlement that exists before Play
+              Billing lands. It defaults to off so the free path - quota,
+              paywall - is what a debug build shows unless asked otherwise. */}
+          {showProSwitch && (
+            <div className="rounded-2xl border border-dashed border-warning-amber/50 bg-warning-amber/5 p-3">
+              <div className="flex items-center gap-3.5">
+                <div className="w-9 h-9 rounded-xl bg-warning-amber/15 text-warning-amber flex items-center justify-center shrink-0">
+                  <Sparkles className="w-5 h-5" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-sans text-sm font-semibold">Simulate Pro</p>
+                  <p className="text-xs text-text-muted">Debug build only — not in release</p>
+                </div>
+                <button
+                  role="switch"
+                  aria-checked={proOn}
+                  onClick={async () => {
+                    const next = !proOn;
+                    setProOn(next);
+                    await setProUnlocked(next);
+                  }}
+                  className={`w-12 h-7 rounded-full transition-colors shrink-0 ${proOn ? 'bg-primary-blue' : 'bg-black/15 dark:bg-white/20'}`}
+                >
+                  <span className={`block w-5 h-5 m-1 rounded-full bg-white transition-transform ${proOn ? 'translate-x-5' : ''}`} />
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Section 1: Privacy */}
           <div className="rounded-2xl border border-border-light dark:border-white/10 overflow-hidden">
