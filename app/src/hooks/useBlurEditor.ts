@@ -98,9 +98,17 @@ function paintBlur(ctx: CanvasRenderingContext2D, image: HTMLImageElement, rect:
 }
 
 function paintPixelate(ctx: CanvasRenderingContext2D, image: HTMLImageElement, rect: PixelRect) {
-    // Downscale the region so each block is about a quarter of its short side,
-    // then blow it back up with smoothing off.
-    const blockSize = Math.max(3, Math.round(Math.min(rect.width, rect.height) / 4));
+    // Block size is driven by the region's short side, which for a line of
+    // text is its height - so "a quarter of the short side" with a floor of 3px
+    // gave a one-line phone number or Aadhaar blocks roughly a quarter of the
+    // glyph height, and the glyphs survived. On a device a pixelated Aadhaar
+    // number read back cleanly at 1:1. Blur never had this problem because its
+    // radius floor is 10px whatever the region's shape.
+    //
+    // A block must therefore be a large fraction of the text height, not a
+    // small one, with a floor that holds for a short region and a cap so a
+    // large block does not turn into a single flat square.
+    const blockSize = Math.min(48, Math.max(12, Math.round(Math.min(rect.width, rect.height) * 0.6)));
     const smallWidth = Math.max(1, Math.round(rect.width / blockSize));
     const smallHeight = Math.max(1, Math.round(rect.height / blockSize));
 
